@@ -1,0 +1,9 @@
+(function() {
+    var implementors = Object.fromEntries([["sui_http",[["impl&lt;S, M, RequestBody, ResponseBodyT&gt; Service&lt;Request&lt;RequestBody&gt;&gt; for <a class=\"struct\" href=\"sui_http/middleware/callback/struct.Callback.html\" title=\"struct sui_http::middleware::callback::Callback\">Callback</a>&lt;S, M&gt;<div class=\"where\">where\n    S: Service&lt;Request&lt;RequestBody&gt;, Response = Response&lt;ResponseBodyT&gt;, Error: <a class=\"trait\" href=\"https://doc.rust-lang.org/1.88.0/core/fmt/trait.Display.html\" title=\"trait core::fmt::Display\">Display</a> + 'static&gt;,\n    M: <a class=\"trait\" href=\"sui_http/middleware/callback/trait.MakeCallbackHandler.html\" title=\"trait sui_http::middleware::callback::MakeCallbackHandler\">MakeCallbackHandler</a>,\n    RequestBody: Body&lt;Error: <a class=\"trait\" href=\"https://doc.rust-lang.org/1.88.0/core/fmt/trait.Display.html\" title=\"trait core::fmt::Display\">Display</a> + 'static&gt;,\n    ResponseBodyT: Body&lt;Error: <a class=\"trait\" href=\"https://doc.rust-lang.org/1.88.0/core/fmt/trait.Display.html\" title=\"trait core::fmt::Display\">Display</a> + 'static&gt;,</div>"],["impl&lt;S, RequestBody, ResponseBody&gt; Service&lt;Request&lt;RequestBody&gt;&gt; for <a class=\"struct\" href=\"sui_http/middleware/grpc_timeout/struct.GrpcTimeout.html\" title=\"struct sui_http::middleware::grpc_timeout::GrpcTimeout\">GrpcTimeout</a>&lt;S&gt;<div class=\"where\">where\n    S: Service&lt;Request&lt;RequestBody&gt;, Response = Response&lt;ResponseBody&gt;&gt;,</div>"]]]]);
+    if (window.register_implementors) {
+        window.register_implementors(implementors);
+    } else {
+        window.pending_implementors = implementors;
+    }
+})()
+//{"start":57,"fragment_lengths":[1500]}
