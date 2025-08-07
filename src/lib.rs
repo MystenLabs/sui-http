@@ -414,7 +414,11 @@ mod tests {
 
         let app = Router::new().route("/", axum::routing::get(|| async { MESSAGE }));
 
-        let handle = Builder::new().serve(("localhost", 0), app).unwrap();
+        let service = ServiceBuilder::new()
+            .layer(middleware::compression::CompressionLayer::new())
+            .service(app);
+
+        let handle = Builder::new().serve(("localhost", 0), service).unwrap();
 
         let url = format!("http://{}", handle.local_addr());
 
