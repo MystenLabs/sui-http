@@ -33,7 +33,7 @@ where
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.project();
         let result = futures_core::ready!(this.inner.poll(cx));
-        let mut handler = this.handler.take().unwrap();
+        let mut handler = this.handler.take().expect("response handler should be available during polling");
 
         let result = match result {
             Ok(response) => {

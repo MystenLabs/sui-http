@@ -84,6 +84,9 @@ impl<A> OnConnectionClose<A> {
 
 impl<A> Drop for OnConnectionClose<A> {
     fn drop(&mut self) {
-        self.active_connections.write().unwrap().remove(&self.id);
+        self.active_connections
+            .write()
+            .expect("active connections lock should not be poisoned")
+            .remove(&self.id);
     }
 }

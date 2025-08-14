@@ -22,8 +22,8 @@ where
 {
     let mut k = Some(k);
     if let Some(k) = <dyn std::any::Any>::downcast_mut::<Option<T>>(&mut k) {
-        Ok(k.take().unwrap())
+        Ok(k.take().expect("downcast target should contain a value"))
     } else {
-        Err(k.unwrap())
+        Err(k.expect("original value should be preserved if downcast fails"))
     }
 }

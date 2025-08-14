@@ -221,7 +221,7 @@ impl<A> ServerHandle<A> {
     pub fn connections(
         &self,
     ) -> std::sync::RwLockReadGuard<'_, HashMap<ConnectionId, ConnectionInfo<A>>> {
-        self.0.connections.read().unwrap()
+        self.0.connections.read().expect("connections lock should not be poisoned")
     }
 
     /// Returns the number of active connections the server is handling
@@ -263,8 +263,8 @@ where
                     self.handle_incomming(io, remote_addr);
                 },
                 Some(maybe_connection) = self.pending_connections.join_next() => {
-                    // If a task panics, just propagate it
-                    let (io, remote_addr) = match maybe_connection.unwrap() {
+                    // Handle task completion, propagating panics as documented
+                    let (io, remote_addr) = match maybe_connection.expect("task should not panic during connection handling") {
                         Ok((io, remote_addr)) => {
                             (io, remote_addr)
                         }
@@ -278,8 +278,8 @@ where
                     self.handle_connection(io, remote_addr);
                 },
                 Some(connection_handler_output) = self.connection_handlers.join_next() => {
-                    // If a task panics, just propagate it
-                    let _: () = connection_handler_output.unwrap();
+                    // Handle connection handler completion, propagating panics as documented
+                    let _: () = connection_handler_output.expect("connection handler task should not panic");
                 },
             }
         }
@@ -354,7 +354,7 @@ where
 
         self.connections
             .write()
-            .unwrap()
+            .expect("connections lock should not be poisoned")
             .insert(connection_id, connection_info);
         let on_connection_close =
             connection_handler::OnConnectionClose::new(connection_id, self.connections.clone());
@@ -414,11 +414,15 @@ mod tests {
 
         let app = Router::new().route("/", axum::routing::get(|| async { MESSAGE }));
 
-        let handle = Builder::new().serve(("localhost", 0), app).unwrap();
+        let handle = Builder::new().serve(("localhost", 0), app)
+            .expect("failed to start test server");
 
         let url = format!("http://{}", handle.local_addr());
 
-        let response = reqwest::get(url).await.unwrap().bytes().await.unwrap();
+        let response = reqwest::get(url).await
+            .expect("failed to make HTTP request")
+            .bytes().await
+            .expect("failed to read response bytes");
 
         assert_eq!(response, MESSAGE.as_bytes());
     }
@@ -429,11 +433,15 @@ mod tests {
 
         let app = Router::new().route("/", axum::routing::get(|| async { MESSAGE }));
 
-        let handle = Builder::new().serve(("localhost", 0), app).unwrap();
+        let handle = Builder::new().serve(("localhost", 0), app)
+            .expect("failed to start test server");
 
         let url = format!("http://{}", handle.local_addr());
 
-        let response = reqwest::get(url).await.unwrap().bytes().await.unwrap();
+        let response = reqwest::get(url).await
+            .expect("failed to make HTTP request")
+            .bytes().await
+            .expect("failed to read response bytes");
 
         // a request was just made so we should have 1 active connection
         assert_eq!(handle.connections().len(), 1);
