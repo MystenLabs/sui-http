@@ -11,6 +11,7 @@ mod layer;
 mod service;
 
 pub use self::body::ResponseBody;
+pub use self::future::Error;
 pub use self::future::ResponseFuture;
 pub use self::layer::CallbackLayer;
 pub use self::service::Callback;

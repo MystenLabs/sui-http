@@ -221,7 +221,10 @@ impl<A> ServerHandle<A> {
     pub fn connections(
         &self,
     ) -> std::sync::RwLockReadGuard<'_, HashMap<ConnectionId, ConnectionInfo<A>>> {
-        self.0.connections.read().unwrap()
+        self.0.connections.read().unwrap_or_else(|e| {
+            tracing::warn!("connections lock was poisoned");
+            e.into_inner()
+        })
     }
 
     /// Returns the number of active connections the server is handling
@@ -263,13 +266,17 @@ where
                     self.handle_incomming(io, remote_addr);
                 },
                 Some(maybe_connection) = self.pending_connections.join_next() => {
-                    // If a task panics, just propagate it
-                    let (io, remote_addr) = match maybe_connection.unwrap() {
-                        Ok((io, remote_addr)) => {
-                            (io, remote_addr)
+                    let (io, remote_addr) = match maybe_connection {
+                        Ok(Ok(val)) => val,
+                        Ok(Err(e)) => {
+                            tracing::debug!(error = %e, "error accepting connection");
+                            continue;
                         }
                         Err(e) => {
-                            tracing::debug!(error = %e, "error accepting connection");
+                            if e.is_panic() {
+                                tracing::error!("task panicked during connection handling: {:?}", e);
+                            }
+                            // The task was cancelled, which is normal during shutdown.
                             continue;
                         }
                     };
@@ -278,8 +285,9 @@ where
                     self.handle_connection(io, remote_addr);
                 },
                 Some(connection_handler_output) = self.connection_handlers.join_next() => {
-                    // If a task panics, just propagate it
-                    let _: () = connection_handler_output.unwrap();
+                    if let Some(e) = connection_handler_output.err().filter(|e| e.is_panic()) {
+                        tracing::error!("connection handler task panicked: {:?}", e);
+                    }
                 },
             }
         }
@@ -352,10 +360,13 @@ where
             },
         ));
 
-        self.connections
-            .write()
-            .unwrap()
-            .insert(connection_id, connection_info);
+        let mut guard = self.connections.write().unwrap_or_else(|poisoned| {
+            tracing::warn!(
+                "connections lock was poisoned. a connection handler may have panicked."
+            );
+            poisoned.into_inner()
+        });
+        guard.insert(connection_id, connection_info);
         let on_connection_close =
             connection_handler::OnConnectionClose::new(connection_id, self.connections.clone());
 
@@ -414,11 +425,18 @@ mod tests {
 
         let app = Router::new().route("/", axum::routing::get(|| async { MESSAGE }));
 
-        let handle = Builder::new().serve(("localhost", 0), app).unwrap();
+        let handle = Builder::new()
+            .serve(("localhost", 0), app)
+            .expect("failed to start test server");
 
         let url = format!("http://{}", handle.local_addr());
 
-        let response = reqwest::get(url).await.unwrap().bytes().await.unwrap();
+        let response = reqwest::get(url)
+            .await
+            .expect("failed to make HTTP request")
+            .bytes()
+            .await
+            .expect("failed to read response bytes");
 
         assert_eq!(response, MESSAGE.as_bytes());
     }
@@ -429,11 +447,18 @@ mod tests {
 
         let app = Router::new().route("/", axum::routing::get(|| async { MESSAGE }));
 
-        let handle = Builder::new().serve(("localhost", 0), app).unwrap();
+        let handle = Builder::new()
+            .serve(("localhost", 0), app)
+            .expect("failed to start test server");
 
         let url = format!("http://{}", handle.local_addr());
 
-        let response = reqwest::get(url).await.unwrap().bytes().await.unwrap();
+        let response = reqwest::get(url)
+            .await
+            .expect("failed to make HTTP request")
+            .bytes()
+            .await
+            .expect("failed to read response bytes");
 
         // a request was just made so we should have 1 active connection
         assert_eq!(handle.connections().len(), 1);

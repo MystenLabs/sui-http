@@ -62,18 +62,20 @@ where
     S: Service<
             Request<RequestBody>,
             Response = Response<ResponseBodyT>,
-            Error: std::fmt::Display + 'static,
+            Error: std::error::Error + 'static,
         >,
     M: MakeCallbackHandler,
     RequestBody: http_body::Body<Error: std::fmt::Display + 'static>,
     ResponseBodyT: http_body::Body<Error: std::fmt::Display + 'static>,
 {
     type Response = Response<ResponseBody<ResponseBodyT, M::Handler>>;
-    type Error = S::Error;
+    type Error = super::future::Error<S::Error>;
     type Future = ResponseFuture<S::Future, M::Handler>;
 
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.inner.poll_ready(cx)
+        self.inner
+            .poll_ready(cx)
+            .map_err(super::future::Error::Inner)
     }
 
     fn call(&mut self, request: Request<RequestBody>) -> Self::Future {

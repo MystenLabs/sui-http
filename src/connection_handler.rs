@@ -84,6 +84,12 @@ impl<A> OnConnectionClose<A> {
 
 impl<A> Drop for OnConnectionClose<A> {
     fn drop(&mut self) {
-        self.active_connections.write().unwrap().remove(&self.id);
+        let mut guard = self.active_connections.write().unwrap_or_else(|poisoned| {
+            tracing::warn!(
+                "active connections lock was poisoned. a connection handler may have panicked."
+            );
+            poisoned.into_inner()
+        });
+        guard.remove(&self.id);
     }
 }
