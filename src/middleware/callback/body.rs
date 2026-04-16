@@ -7,35 +7,20 @@ use http_body::Body;
 use http_body::Frame;
 use pin_project_lite::pin_project;
 use std::fmt;
-use std::marker::PhantomData;
 use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
 use std::task::ready;
 
-/// Direction marker indicating a request-side [`CallbackBody`], whose
-/// handler must implement [`RequestHandler`].
-#[derive(Debug, Default, Clone, Copy)]
-pub struct RequestDirection;
-
-/// Direction marker indicating a response-side [`CallbackBody`], whose
-/// handler must implement [`ResponseHandler`].
-#[derive(Debug, Default, Clone, Copy)]
-pub struct ResponseDirection;
-
 pin_project! {
-    /// Body wrapper used by [`Callback`] in both the request and response
-    /// positions. Every frame forwarded from the inner body is surfaced
-    /// to the configured handler via `on_body_chunk`, `on_end_of_stream`,
-    /// or `on_body_error`.
+    /// Request body wrapper for [`Callback`].
     ///
-    /// The third type parameter `D` is a direction marker — either
-    /// [`RequestDirection`] or [`ResponseDirection`] — that selects
-    /// which of [`RequestHandler`] or [`ResponseHandler`] the body will
-    /// dispatch through.
+    /// Forwards frames from the inner request body unchanged, surfacing
+    /// every event to the configured [`RequestHandler`] via
+    /// `on_body_chunk`, `on_end_of_stream`, or `on_body_error`.
     ///
     /// [`Callback`]: super::Callback
-    pub struct CallbackBody<B, H, D> {
+    pub struct RequestBody<B, H> {
         #[pin]
         pub(crate) inner: B,
         pub(crate) handler: H,
@@ -43,13 +28,10 @@ pin_project! {
         // a trailers frame and then `Poll::Ready(None)` would otherwise
         // trigger two end-of-stream callbacks.
         pub(crate) ended: bool,
-        // `fn() -> D` keeps `CallbackBody` `Send`/`Sync` regardless of
-        // whether the marker type is; we never hold a `D` value.
-        pub(crate) _direction: PhantomData<fn() -> D>,
     }
 }
 
-impl<B, H> Body for CallbackBody<B, H, RequestDirection>
+impl<B, H> Body for RequestBody<B, H>
 where
     B: Body,
     B::Error: fmt::Display + 'static,
@@ -113,7 +95,23 @@ where
     }
 }
 
-impl<B, H> Body for CallbackBody<B, H, ResponseDirection>
+pin_project! {
+    /// Response body wrapper for [`Callback`].
+    ///
+    /// Forwards frames from the inner response body unchanged, surfacing
+    /// every event to the configured [`ResponseHandler`] via
+    /// `on_body_chunk`, `on_end_of_stream`, or `on_body_error`.
+    ///
+    /// [`Callback`]: super::Callback
+    pub struct ResponseBody<B, H> {
+        #[pin]
+        pub(crate) inner: B,
+        pub(crate) handler: H,
+        pub(crate) ended: bool,
+    }
+}
+
+impl<B, H> Body for ResponseBody<B, H>
 where
     B: Body,
     B::Error: fmt::Display + 'static,
@@ -174,28 +172,5 @@ where
 
     fn size_hint(&self) -> http_body::SizeHint {
         self.inner.size_hint()
-    }
-}
-
-// Convenience constructors used by the middleware implementation.
-impl<B, H> CallbackBody<B, H, RequestDirection> {
-    pub(crate) fn request(inner: B, handler: H) -> Self {
-        Self {
-            inner,
-            handler,
-            ended: false,
-            _direction: PhantomData,
-        }
-    }
-}
-
-impl<B, H> CallbackBody<B, H, ResponseDirection> {
-    pub(crate) fn response(inner: B, handler: H) -> Self {
-        Self {
-            inner,
-            handler,
-            ended: false,
-            _direction: PhantomData,
-        }
     }
 }

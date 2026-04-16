@@ -7,10 +7,11 @@
 //! A [`MakeCallbackHandler`] produces a pair of handlers per request:
 //! a [`RequestHandler`] (invoked as the request body is polled by the
 //! inner service) and a [`ResponseHandler`] (invoked when the response
-//! materializes and as its body is polled by the caller). A single
-//! [`CallbackBody`] type wraps the body in both positions, with a
-//! direction marker ([`RequestDirection`] or [`ResponseDirection`])
-//! selecting which handler trait the body dispatches through.
+//! materializes and as its body is polled by the caller). The inner
+//! service's request body is wrapped as a [`RequestBody`], and the
+//! response body handed back to the caller is wrapped as a
+//! [`ResponseBody`]; both carry their respective handler along with the
+//! data.
 //!
 //! Either side can be a no-op by using the unit type `()`, which has a
 //! blanket [`RequestHandler`] impl provided by this crate.
@@ -66,16 +67,16 @@
 //! # Body type change
 //!
 //! The wrapped [`Callback`] service hands the inner service a
-//! `Request<CallbackBody<B, M::RequestHandler, RequestDirection>>` rather
-//! than the original `Request<B>`. For body-polymorphic inner services
-//! (e.g. `axum::Router` or generic `tower` services), this is transparent.
+//! `Request<RequestBody<B, M::RequestHandler>>` rather than the original
+//! `Request<B>`. For body-polymorphic inner services (e.g. `axum::Router`
+//! or generic `tower` services), this is transparent.
 //!
 //! Monomorphic inner services that require a specific body type — for
 //! example `tonic::transport::Channel`, which expects `tonic::body::Body` —
 //! must rebox the wrapped body at the call site:
 //!
 //! ```ignore
-//! let wrapped: CallbackBody<_, _, RequestDirection> = /* received */;
+//! let wrapped: RequestBody<_, _> = /* received */;
 //! let reboxed = tonic::body::Body::new(wrapped);
 //! ```
 //!
@@ -90,9 +91,8 @@ mod future;
 mod layer;
 mod service;
 
-pub use self::body::CallbackBody;
-pub use self::body::RequestDirection;
-pub use self::body::ResponseDirection;
+pub use self::body::RequestBody;
+pub use self::body::ResponseBody;
 pub use self::future::ResponseFuture;
 pub use self::layer::CallbackLayer;
 pub use self::service::Callback;
@@ -313,7 +313,7 @@ mod tests {
         let events = recorder.0.clone();
 
         let inner = tower::service_fn(
-            |req: Request<CallbackBody<Full<Bytes>, ReqH, RequestDirection>>| async move {
+            |req: Request<RequestBody<Full<Bytes>, ReqH>>| async move {
                 drain(req.into_body()).await.unwrap();
                 Ok::<_, Infallible>(Response::new(Full::new(Bytes::from_static(b"ok"))))
             },
@@ -353,7 +353,7 @@ mod tests {
         let body = StreamBody::new(stream::iter(frames));
 
         let inner = tower::service_fn(
-            |req: Request<CallbackBody<StreamBody<_>, ReqH, RequestDirection>>| async move {
+            |req: Request<RequestBody<StreamBody<_>, ReqH>>| async move {
                 drain(req.into_body()).await.unwrap();
                 Ok::<_, Infallible>(Response::new(Full::new(Bytes::new())))
             },
@@ -396,7 +396,7 @@ mod tests {
         let body = StreamBody::new(stream::iter(frames));
 
         let inner = tower::service_fn(
-            |req: Request<CallbackBody<StreamBody<_>, ReqH, RequestDirection>>| async move {
+            |req: Request<RequestBody<StreamBody<_>, ReqH>>| async move {
                 // Ignore the error; we just want to trigger it.
                 let _ = drain(req.into_body()).await;
                 Ok::<_, Infallible>(Response::new(Full::new(Bytes::new())))
@@ -448,7 +448,7 @@ mod tests {
         let make = MakeResponseOnly(counter.clone());
 
         let inner = tower::service_fn(
-            |req: Request<CallbackBody<Full<Bytes>, (), RequestDirection>>| async move {
+            |req: Request<RequestBody<Full<Bytes>, ()>>| async move {
                 drain(req.into_body()).await.unwrap();
                 Ok::<_, Infallible>(Response::new(Full::new(Bytes::from_static(b"hi"))))
             },
@@ -484,7 +484,7 @@ mod tests {
 
         let inner = tower::service_fn({
             let body_slot = body_slot.clone();
-            move |req: Request<CallbackBody<Full<Bytes>, ReqH, RequestDirection>>| {
+            move |req: Request<RequestBody<Full<Bytes>, ReqH>>| {
                 let body = body_slot.lock().unwrap().take().expect("called once");
                 async move {
                     drain(req.into_body()).await.unwrap();
@@ -529,7 +529,7 @@ mod tests {
         let events = recorder.0.clone();
 
         let inner = tower::service_fn(
-            |req: Request<CallbackBody<Full<Bytes>, ReqH, RequestDirection>>| async move {
+            |req: Request<RequestBody<Full<Bytes>, ReqH>>| async move {
                 drain(req.into_body()).await.unwrap();
                 let frames: Vec<Result<http_body::Frame<Bytes>, BodyErr>> = vec![
                     Ok(http_body::Frame::data(Bytes::from_static(b"partial"))),
@@ -573,7 +573,7 @@ mod tests {
         let events = recorder.0.clone();
 
         let inner = tower::service_fn(
-            |_req: Request<CallbackBody<Full<Bytes>, ReqH, RequestDirection>>| async move {
+            |_req: Request<RequestBody<Full<Bytes>, ReqH>>| async move {
                 Err::<Response<Full<Bytes>>, _>(SvcErr)
             },
         );
