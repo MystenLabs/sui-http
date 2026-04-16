@@ -1,10 +1,9 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+use super::CallbackBody;
 use super::CallbackLayer;
 use super::MakeCallbackHandler;
-use super::RequestBody;
-use super::ResponseBody;
 use super::ResponseFuture;
 use http::Request;
 use http::Response;
@@ -61,7 +60,7 @@ impl<S, M> Callback<S, M> {
 impl<S, M, ReqBody, ResponseBodyT> Service<Request<ReqBody>> for Callback<S, M>
 where
     S: Service<
-            Request<RequestBody<ReqBody, M::RequestHandler>>,
+            Request<CallbackBody<ReqBody, M::RequestHandler>>,
             Response = Response<ResponseBodyT>,
             Error: std::fmt::Display + 'static,
         >,
@@ -69,7 +68,7 @@ where
     ReqBody: http_body::Body<Error: std::fmt::Display + 'static>,
     ResponseBodyT: http_body::Body<Error: std::fmt::Display + 'static>,
 {
-    type Response = Response<ResponseBody<ResponseBodyT, M::ResponseHandler>>;
+    type Response = Response<CallbackBody<ResponseBodyT, M::ResponseHandler>>;
     type Error = S::Error;
     type Future = ResponseFuture<S::Future, M::ResponseHandler>;
 
@@ -80,9 +79,9 @@ where
     fn call(&mut self, request: Request<ReqBody>) -> Self::Future {
         let (head, body) = request.into_parts();
         let (req_handler, resp_handler) = self.make_callback_handler.make_handler(&head);
-        let wrapped_body = RequestBody {
+        let wrapped_body = CallbackBody {
             inner: body,
-            handler: req_handler,
+            observer: req_handler,
             ended: false,
         };
         let request = Request::from_parts(head, wrapped_body);
