@@ -44,6 +44,7 @@ where
                     ResponseBody {
                         inner: body,
                         handler,
+                        ended: false,
                     },
                 ))
             }

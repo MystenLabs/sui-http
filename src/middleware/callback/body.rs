@@ -20,6 +20,10 @@ pin_project! {
         #[pin]
         pub(crate) inner: B,
         pub(crate) handler: ResponseHandler,
+        // Ensures `on_end_of_stream` fires at most once. A body that emits
+        // a trailers frame and then `Poll::Ready(None)` would otherwise
+        // trigger two end-of-stream callbacks.
+        pub(crate) ended: bool,
     }
 }
 
@@ -51,7 +55,10 @@ where
 
                 let frame = match frame.into_trailers() {
                     Ok(trailers) => {
-                        this.handler.on_end_of_stream(Some(&trailers));
+                        if !*this.ended {
+                            this.handler.on_end_of_stream(Some(&trailers));
+                            *this.ended = true;
+                        }
                         Frame::trailers(trailers)
                     }
                     Err(frame) => frame,
@@ -65,7 +72,10 @@ where
                 Poll::Ready(Some(Err(err)))
             }
             None => {
-                this.handler.on_end_of_stream(None);
+                if !*this.ended {
+                    this.handler.on_end_of_stream(None);
+                    *this.ended = true;
+                }
 
                 Poll::Ready(None)
             }

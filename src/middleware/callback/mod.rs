@@ -433,4 +433,135 @@ mod tests {
 
         assert_eq!(*counter.lock().unwrap(), 1);
     }
+
+    #[tokio::test]
+    async fn observes_response_trailers_on_end() {
+        let recorder = Recorder::default();
+        let events = recorder.0.clone();
+
+        let mut trailers = HeaderMap::new();
+        trailers.insert("x-resp-trailer", "xyz".parse().unwrap());
+        let frames: Vec<Result<http_body::Frame<Bytes>, Infallible>> = vec![
+            Ok(http_body::Frame::data(Bytes::from_static(b"part-1"))),
+            Ok(http_body::Frame::data(Bytes::from_static(b"part-2"))),
+            Ok(http_body::Frame::trailers(trailers.clone())),
+        ];
+        // `StreamBody` isn't `Clone` and `service_fn` takes an `Fn`, so we
+        // smuggle the single-use body through a `Mutex<Option<_>>`.
+        let body_slot = Arc::new(Mutex::new(Some(StreamBody::new(stream::iter(frames)))));
+
+        let inner = tower::service_fn({
+            let body_slot = body_slot.clone();
+            move |req: Request<RequestBody<Full<Bytes>, ReqH>>| {
+                let body = body_slot.lock().unwrap().take().expect("called once");
+                async move {
+                    drain(req.into_body()).await.unwrap();
+                    Ok::<_, Infallible>(Response::new(body))
+                }
+            }
+        });
+        let svc = ServiceBuilder::new()
+            .layer(CallbackLayer::new(recorder))
+            .service(inner);
+
+        let response = svc
+            .oneshot(Request::new(Full::new(Bytes::from_static(b"ping"))))
+            .await
+            .unwrap();
+        drain(response.into_body()).await.unwrap();
+
+        let events = events.lock().unwrap();
+        assert_eq!(events.response_seen, 1);
+        assert_eq!(
+            events.response_chunks,
+            vec![b"part-1".to_vec(), b"part-2".to_vec()]
+        );
+        assert_eq!(events.response_end_trailers.len(), 1);
+        assert_eq!(events.response_end_trailers[0].as_ref(), Some(&trailers));
+        assert!(events.response_errors.is_empty());
+    }
+
+    #[tokio::test]
+    async fn observes_response_body_error() {
+        #[derive(Debug)]
+        struct BodyErr;
+        impl std::fmt::Display for BodyErr {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("body-boom")
+            }
+        }
+        impl std::error::Error for BodyErr {}
+
+        let recorder = Recorder::default();
+        let events = recorder.0.clone();
+
+        let inner = tower::service_fn(
+            |req: Request<RequestBody<Full<Bytes>, ReqH>>| async move {
+                drain(req.into_body()).await.unwrap();
+                let frames: Vec<Result<http_body::Frame<Bytes>, BodyErr>> = vec![
+                    Ok(http_body::Frame::data(Bytes::from_static(b"partial"))),
+                    Err(BodyErr),
+                ];
+                Ok::<_, Infallible>(Response::new(StreamBody::new(stream::iter(frames))))
+            },
+        );
+        let svc = ServiceBuilder::new()
+            .layer(CallbackLayer::new(recorder))
+            .service(inner);
+
+        let response = svc
+            .oneshot(Request::new(Full::new(Bytes::new())))
+            .await
+            .unwrap();
+        // Drain but ignore the body error; we only care about the callback.
+        let _ = drain(response.into_body()).await;
+
+        let events = events.lock().unwrap();
+        assert_eq!(events.response_seen, 1);
+        assert_eq!(events.response_chunks, vec![b"partial".to_vec()]);
+        assert_eq!(events.response_errors, vec!["body-boom".to_string()]);
+        // An error terminates the stream; no clean end-of-stream fires.
+        assert!(events.response_end_trailers.is_empty());
+    }
+
+    #[tokio::test]
+    async fn observes_service_error() {
+        #[derive(Debug)]
+        struct SvcErr;
+        impl std::fmt::Display for SvcErr {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("svc-boom")
+            }
+        }
+        impl std::error::Error for SvcErr {}
+
+        let recorder = Recorder::default();
+        let events = recorder.0.clone();
+
+        let inner = tower::service_fn(
+            |_req: Request<RequestBody<Full<Bytes>, ReqH>>| async move {
+                Err::<Response<Full<Bytes>>, _>(SvcErr)
+            },
+        );
+        let svc = ServiceBuilder::new()
+            .layer(CallbackLayer::new(recorder))
+            .service(inner);
+
+        let result = svc
+            .oneshot(Request::new(Full::new(Bytes::from_static(b"ping"))))
+            .await;
+        let err = match result {
+            Ok(_) => panic!("expected service error"),
+            Err(err) => err,
+        };
+        assert_eq!(err.to_string(), "svc-boom");
+
+        let events = events.lock().unwrap();
+        // The response itself never materialized.
+        assert_eq!(events.response_seen, 0);
+        assert!(events.response_chunks.is_empty());
+        assert!(events.response_end_trailers.is_empty());
+        // But the service error was observed by the response handler.
+        assert_eq!(events.response_errors, vec!["svc-boom".to_string()]);
+    }
 }
