@@ -4,6 +4,8 @@
 use super::CallbackBody;
 use super::CallbackLayer;
 use super::MakeCallbackHandler;
+use super::RequestDirection;
+use super::ResponseDirection;
 use super::ResponseFuture;
 use http::Request;
 use http::Response;
@@ -60,7 +62,7 @@ impl<S, M> Callback<S, M> {
 impl<S, M, ReqBody, ResponseBodyT> Service<Request<ReqBody>> for Callback<S, M>
 where
     S: Service<
-            Request<CallbackBody<ReqBody, M::RequestHandler>>,
+            Request<CallbackBody<ReqBody, M::RequestHandler, RequestDirection>>,
             Response = Response<ResponseBodyT>,
             Error: std::fmt::Display + 'static,
         >,
@@ -68,7 +70,7 @@ where
     ReqBody: http_body::Body<Error: std::fmt::Display + 'static>,
     ResponseBodyT: http_body::Body<Error: std::fmt::Display + 'static>,
 {
-    type Response = Response<CallbackBody<ResponseBodyT, M::ResponseHandler>>;
+    type Response = Response<CallbackBody<ResponseBodyT, M::ResponseHandler, ResponseDirection>>;
     type Error = S::Error;
     type Future = ResponseFuture<S::Future, M::ResponseHandler>;
 
@@ -79,12 +81,7 @@ where
     fn call(&mut self, request: Request<ReqBody>) -> Self::Future {
         let (head, body) = request.into_parts();
         let (req_handler, resp_handler) = self.make_callback_handler.make_handler(&head);
-        let wrapped_body = CallbackBody {
-            inner: body,
-            observer: req_handler,
-            ended: false,
-        };
-        let request = Request::from_parts(head, wrapped_body);
+        let request = Request::from_parts(head, CallbackBody::request(body, req_handler));
 
         ResponseFuture {
             inner: self.inner.call(request),

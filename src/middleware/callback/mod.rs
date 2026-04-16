@@ -7,20 +7,19 @@
 //! A [`MakeCallbackHandler`] produces a pair of handlers per request:
 //! a [`RequestHandler`] (invoked as the request body is polled by the
 //! inner service) and a [`ResponseHandler`] (invoked when the response
-//! materializes and as its body is polled by the caller). Both sides share
-//! the body-level surface through [`BodyObserver`], so a single
-//! [`CallbackBody`] type wraps the body in both positions.
+//! materializes and as its body is polled by the caller). A single
+//! [`CallbackBody`] type wraps the body in both positions, with a
+//! direction marker ([`RequestDirection`] or [`ResponseDirection`])
+//! selecting which handler trait the body dispatches through.
 //!
-//! Either side can be a no-op by using the unit type `()`, which has
-//! blanket [`BodyObserver`] and [`RequestHandler`] impls provided by this
-//! crate.
+//! Either side can be a no-op by using the unit type `()`, which has a
+//! blanket [`RequestHandler`] impl provided by this crate.
 //!
 //! # Example
 //!
 //! ```
 //! use http::request;
 //! use http::response;
-//! use sui_http::middleware::callback::BodyObserver;
 //! use sui_http::middleware::callback::CallbackLayer;
 //! use sui_http::middleware::callback::MakeCallbackHandler;
 //! use sui_http::middleware::callback::RequestHandler;
@@ -32,17 +31,18 @@
 //!     bytes: usize,
 //! }
 //!
-//! impl BodyObserver for ByteCounter {
+//! impl RequestHandler for ByteCounter {
 //!     fn on_body_chunk<B: bytes::Buf>(&mut self, chunk: &B) {
 //!         self.bytes += chunk.remaining();
 //!     }
 //! }
 //!
-//! impl RequestHandler for ByteCounter {}
-//!
 //! impl ResponseHandler for ByteCounter {
 //!     fn on_response(&mut self, _parts: &response::Parts) {}
 //!     fn on_service_error<E: std::fmt::Display + 'static>(&mut self, _error: &E) {}
+//!     fn on_body_chunk<B: bytes::Buf>(&mut self, chunk: &B) {
+//!         self.bytes += chunk.remaining();
+//!     }
 //! }
 //!
 //! #[derive(Clone)]
@@ -66,16 +66,16 @@
 //! # Body type change
 //!
 //! The wrapped [`Callback`] service hands the inner service a
-//! `Request<CallbackBody<B, M::RequestHandler>>` rather than the original
-//! `Request<B>`. For body-polymorphic inner services (e.g. `axum::Router`
-//! or generic `tower` services), this is transparent.
+//! `Request<CallbackBody<B, M::RequestHandler, RequestDirection>>` rather
+//! than the original `Request<B>`. For body-polymorphic inner services
+//! (e.g. `axum::Router` or generic `tower` services), this is transparent.
 //!
 //! Monomorphic inner services that require a specific body type — for
 //! example `tonic::transport::Channel`, which expects `tonic::body::Body` —
 //! must rebox the wrapped body at the call site:
 //!
 //! ```ignore
-//! let wrapped: CallbackBody<_, _> = /* received by inner service */;
+//! let wrapped: CallbackBody<_, _, RequestDirection> = /* received */;
 //! let reboxed = tonic::body::Body::new(wrapped);
 //! ```
 //!
@@ -91,6 +91,8 @@ mod layer;
 mod service;
 
 pub use self::body::CallbackBody;
+pub use self::body::RequestDirection;
+pub use self::body::ResponseDirection;
 pub use self::future::ResponseFuture;
 pub use self::layer::CallbackLayer;
 pub use self::service::Callback;
@@ -115,14 +117,14 @@ pub trait MakeCallbackHandler {
     ) -> (Self::RequestHandler, Self::ResponseHandler);
 }
 
-/// Shared, body-level observation surface. Both [`RequestHandler`] and
-/// [`ResponseHandler`] require this, which lets a single
-/// [`CallbackBody`] wrap the body in either position.
+/// Observes the request body as it is polled by the inner service.
 ///
-/// All methods default to no-ops, so implementors can override only the
-/// events they care about.
-pub trait BodyObserver {
-    /// Called once per data frame yielded by the body.
+/// All methods default to no-ops, so implementors only override the
+/// events they care about. The unit type `()` has a blanket impl with
+/// every method a no-op; use `type RequestHandler = ();` when only the
+/// response side is interesting.
+pub trait RequestHandler {
+    /// Called once per data frame yielded by the request body.
     fn on_body_chunk<B>(&mut self, _chunk: &B)
     where
         B: bytes::Buf,
@@ -130,7 +132,7 @@ pub trait BodyObserver {
         // do nothing
     }
 
-    /// Called at most once when the body stream ends.
+    /// Called at most once when the request body stream ends.
     ///
     /// `trailers` is `Some` if the final frame was a trailers frame,
     /// otherwise `None`.
@@ -138,7 +140,7 @@ pub trait BodyObserver {
         // do nothing
     }
 
-    /// Called when polling the body yields an error.
+    /// Called when polling the request body yields an error.
     fn on_body_error<E>(&mut self, _error: &E)
     where
         E: std::fmt::Display + 'static,
@@ -147,36 +149,44 @@ pub trait BodyObserver {
     }
 }
 
-impl BodyObserver for () {}
-
-/// Observes the request body as it is polled by the inner service.
-///
-/// Request-side observation is purely body-level, so this trait has no
-/// methods of its own — implementing [`BodyObserver`] is sufficient.
-/// The empty [`RequestHandler`] impl is required as a marker so the
-/// handler can be used in [`MakeCallbackHandler::RequestHandler`].
-///
-/// The unit type `()` satisfies this trait with every method a no-op;
-/// use `type RequestHandler = ();` when only the response side is
-/// interesting.
-pub trait RequestHandler: BodyObserver {}
-
 impl RequestHandler for () {}
 
 /// Observes the response as seen by the caller: the response parts, the
-/// response body (via [`BodyObserver`]), and the service-level error
-/// that occurs if the inner service's future resolves to `Err` before
-/// any response is produced.
-pub trait ResponseHandler: BodyObserver {
+/// response body, and the service-level error that occurs if the inner
+/// service's future resolves to `Err` before any response is produced.
+///
+/// Body-level methods default to no-ops.
+pub trait ResponseHandler {
     /// Called exactly once when the inner service produces a response.
     fn on_response(&mut self, response: &response::Parts);
 
     /// Called when the inner service's future resolves to `Err` (no
-    /// response is produced). Body errors are reported separately
-    /// through [`BodyObserver::on_body_error`].
+    /// response is produced). Response body errors are reported
+    /// separately through [`Self::on_body_error`].
     fn on_service_error<E>(&mut self, error: &E)
     where
         E: std::fmt::Display + 'static;
+
+    /// Called once per data frame yielded by the response body.
+    fn on_body_chunk<B>(&mut self, _chunk: &B)
+    where
+        B: bytes::Buf,
+    {
+        // do nothing
+    }
+
+    /// Called at most once when the response body stream ends.
+    fn on_end_of_stream(&mut self, _trailers: Option<&HeaderMap>) {
+        // do nothing
+    }
+
+    /// Called when polling the response body yields an error.
+    fn on_body_error<E>(&mut self, _error: &E)
+    where
+        E: std::fmt::Display + 'static,
+    {
+        // do nothing
+    }
 }
 
 #[cfg(test)]
@@ -218,7 +228,7 @@ mod tests {
     struct ReqH(Arc<Mutex<Events>>);
     struct RespH(Arc<Mutex<Events>>);
 
-    impl BodyObserver for ReqH {
+    impl RequestHandler for ReqH {
         fn on_body_chunk<B: Buf>(&mut self, chunk: &B) {
             self.0
                 .lock()
@@ -242,9 +252,17 @@ mod tests {
         }
     }
 
-    impl RequestHandler for ReqH {}
-
-    impl BodyObserver for RespH {
+    impl ResponseHandler for RespH {
+        fn on_response(&mut self, _parts: &response::Parts) {
+            self.0.lock().unwrap().response_seen += 1;
+        }
+        fn on_service_error<E: std::fmt::Display + 'static>(&mut self, error: &E) {
+            self.0
+                .lock()
+                .unwrap()
+                .response_service_errors
+                .push(error.to_string());
+        }
         fn on_body_chunk<B: Buf>(&mut self, chunk: &B) {
             self.0
                 .lock()
@@ -264,19 +282,6 @@ mod tests {
                 .lock()
                 .unwrap()
                 .response_body_errors
-                .push(error.to_string());
-        }
-    }
-
-    impl ResponseHandler for RespH {
-        fn on_response(&mut self, _parts: &response::Parts) {
-            self.0.lock().unwrap().response_seen += 1;
-        }
-        fn on_service_error<E: std::fmt::Display + 'static>(&mut self, error: &E) {
-            self.0
-                .lock()
-                .unwrap()
-                .response_service_errors
                 .push(error.to_string());
         }
     }
@@ -308,7 +313,7 @@ mod tests {
         let events = recorder.0.clone();
 
         let inner = tower::service_fn(
-            |req: Request<CallbackBody<Full<Bytes>, ReqH>>| async move {
+            |req: Request<CallbackBody<Full<Bytes>, ReqH, RequestDirection>>| async move {
                 drain(req.into_body()).await.unwrap();
                 Ok::<_, Infallible>(Response::new(Full::new(Bytes::from_static(b"ok"))))
             },
@@ -348,7 +353,7 @@ mod tests {
         let body = StreamBody::new(stream::iter(frames));
 
         let inner = tower::service_fn(
-            |req: Request<CallbackBody<StreamBody<_>, ReqH>>| async move {
+            |req: Request<CallbackBody<StreamBody<_>, ReqH, RequestDirection>>| async move {
                 drain(req.into_body()).await.unwrap();
                 Ok::<_, Infallible>(Response::new(Full::new(Bytes::new())))
             },
@@ -391,7 +396,7 @@ mod tests {
         let body = StreamBody::new(stream::iter(frames));
 
         let inner = tower::service_fn(
-            |req: Request<CallbackBody<StreamBody<_>, ReqH>>| async move {
+            |req: Request<CallbackBody<StreamBody<_>, ReqH, RequestDirection>>| async move {
                 // Ignore the error; we just want to trigger it.
                 let _ = drain(req.into_body()).await;
                 Ok::<_, Infallible>(Response::new(Full::new(Bytes::new())))
@@ -420,7 +425,6 @@ mod tests {
         struct MakeResponseOnly(Arc<Mutex<u32>>);
 
         struct CountResp(Arc<Mutex<u32>>);
-        impl BodyObserver for CountResp {}
         impl ResponseHandler for CountResp {
             fn on_response(&mut self, _parts: &response::Parts) {
                 *self.0.lock().unwrap() += 1;
@@ -444,7 +448,7 @@ mod tests {
         let make = MakeResponseOnly(counter.clone());
 
         let inner = tower::service_fn(
-            |req: Request<CallbackBody<Full<Bytes>, ()>>| async move {
+            |req: Request<CallbackBody<Full<Bytes>, (), RequestDirection>>| async move {
                 drain(req.into_body()).await.unwrap();
                 Ok::<_, Infallible>(Response::new(Full::new(Bytes::from_static(b"hi"))))
             },
@@ -480,7 +484,7 @@ mod tests {
 
         let inner = tower::service_fn({
             let body_slot = body_slot.clone();
-            move |req: Request<CallbackBody<Full<Bytes>, ReqH>>| {
+            move |req: Request<CallbackBody<Full<Bytes>, ReqH, RequestDirection>>| {
                 let body = body_slot.lock().unwrap().take().expect("called once");
                 async move {
                     drain(req.into_body()).await.unwrap();
@@ -525,7 +529,7 @@ mod tests {
         let events = recorder.0.clone();
 
         let inner = tower::service_fn(
-            |req: Request<CallbackBody<Full<Bytes>, ReqH>>| async move {
+            |req: Request<CallbackBody<Full<Bytes>, ReqH, RequestDirection>>| async move {
                 drain(req.into_body()).await.unwrap();
                 let frames: Vec<Result<http_body::Frame<Bytes>, BodyErr>> = vec![
                     Ok(http_body::Frame::data(Bytes::from_static(b"partial"))),
@@ -569,7 +573,7 @@ mod tests {
         let events = recorder.0.clone();
 
         let inner = tower::service_fn(
-            |_req: Request<CallbackBody<Full<Bytes>, ReqH>>| async move {
+            |_req: Request<CallbackBody<Full<Bytes>, ReqH, RequestDirection>>| async move {
                 Err::<Response<Full<Bytes>>, _>(SvcErr)
             },
         );
