@@ -1,0 +1,70 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Middleware for observing both the request and response streams of a `tower::Service` via user-provided callback handlers."><title>sui_http::middleware::callback - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-77263533.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="sui_http" data-themes="" data-resource-suffix="" data-rustdoc-version="1.94.1 (e408947bf 2026-03-25)" data-channel="1.94.1" data-search-js="search-9e2438ea.js" data-stringdex-js="stringdex-b897f86f.js" data-settings-js="settings-c38705f0.js" ><script src="../../../static.files/storage-e2aeef58.js"></script><script defer src="../sidebar-items.js"></script><script defer src="../../../static.files/main-7bab91a1.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-ffcac47a.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc mod"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><rustdoc-topbar><h2><a href="#">Module callback</a></h2></rustdoc-topbar><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../../../sui_http/index.html">sui_<wbr>http</a><span class="version">0.2.0</span></h2></div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">Module callback</a></h2><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#example" title="Example">Example</a></li><li><a href="#body-type-change" title="Body type change">Body type change</a></li></ul><h3><a href="#structs">Module Items</a></h3><ul class="block"><li><a href="#structs" title="Structs">Structs</a></li><li><a href="#traits" title="Traits">Traits</a></li></ul></section><div id="rustdoc-modnav"><h2><a href="../index.html">In sui_<wbr>http::<wbr>middleware</a></h2></div></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><div class="width-limiter"><section id="main-content" class="content"><div class="main-heading"><div class="rustdoc-breadcrumbs"><a href="../../index.html">sui_http</a>::<wbr><a href="../index.html">middleware</a></div><h1>Module <span>callback</span>&nbsp;<button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../../src/sui_http/middleware/callback/mod.rs.html#4-604">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Middleware for observing both the request and response streams of a
+[<code>tower::Service</code>] via user-provided callback handlers.</p>
+<p>A <a href="trait.MakeCallbackHandler.html" title="trait sui_http::middleware::callback::MakeCallbackHandler"><code>MakeCallbackHandler</code></a> produces a pair of handlers per request:
+a <a href="trait.RequestHandler.html" title="trait sui_http::middleware::callback::RequestHandler"><code>RequestHandler</code></a> (invoked as the request body is polled by the
+inner service) and a <a href="trait.ResponseHandler.html" title="trait sui_http::middleware::callback::ResponseHandler"><code>ResponseHandler</code></a> (invoked when the response
+materializes and as its body is polled by the caller). The inner
+service’s request body is wrapped as a <a href="struct.RequestBody.html" title="struct sui_http::middleware::callback::RequestBody"><code>RequestBody</code></a>, and the
+response body handed back to the caller is wrapped as a
+<a href="struct.ResponseBody.html" title="struct sui_http::middleware::callback::ResponseBody"><code>ResponseBody</code></a>; both carry their respective handler along with the
+data.</p>
+<p>Either side can be a no-op by using the unit type <code>()</code>, which has a
+blanket <a href="trait.RequestHandler.html" title="trait sui_http::middleware::callback::RequestHandler"><code>RequestHandler</code></a> impl provided by this crate.</p>
+<h2 id="example"><a class="doc-anchor" href="#example">§</a>Example</h2>
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>http::request;
+<span class="kw">use </span>http::response;
+<span class="kw">use </span>sui_http::middleware::callback::CallbackLayer;
+<span class="kw">use </span>sui_http::middleware::callback::MakeCallbackHandler;
+<span class="kw">use </span>sui_http::middleware::callback::RequestHandler;
+<span class="kw">use </span>sui_http::middleware::callback::ResponseHandler;
+
+<span class="doccomment">/// A handler that counts bytes observed on one side of the exchange.
+</span><span class="attr">#[derive(Default)]
+</span><span class="kw">struct </span>ByteCounter {
+    bytes: usize,
+}
+
+<span class="kw">impl </span>RequestHandler <span class="kw">for </span>ByteCounter {
+    <span class="kw">fn </span>on_body_chunk&lt;B: bytes::Buf&gt;(<span class="kw-2">&amp;mut </span><span class="self">self</span>, chunk: <span class="kw-2">&amp;</span>B) {
+        <span class="self">self</span>.bytes += chunk.remaining();
+    }
+}
+
+<span class="kw">impl </span>ResponseHandler <span class="kw">for </span>ByteCounter {
+    <span class="kw">fn </span>on_response(<span class="kw-2">&amp;mut </span><span class="self">self</span>, _parts: <span class="kw-2">&amp;</span>response::Parts) {}
+    <span class="kw">fn </span>on_service_error&lt;E: std::fmt::Display + <span class="lifetime">'static</span>&gt;(<span class="kw-2">&amp;mut </span><span class="self">self</span>, _error: <span class="kw-2">&amp;</span>E) {}
+    <span class="kw">fn </span>on_body_chunk&lt;B: bytes::Buf&gt;(<span class="kw-2">&amp;mut </span><span class="self">self</span>, chunk: <span class="kw-2">&amp;</span>B) {
+        <span class="self">self</span>.bytes += chunk.remaining();
+    }
+}
+
+<span class="attr">#[derive(Clone)]
+</span><span class="kw">struct </span>MakeByteCounter;
+
+<span class="kw">impl </span>MakeCallbackHandler <span class="kw">for </span>MakeByteCounter {
+    <span class="kw">type </span>RequestHandler = ByteCounter;
+    <span class="kw">type </span>ResponseHandler = ByteCounter;
+
+    <span class="kw">fn </span>make_handler(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        _request: <span class="kw-2">&amp;</span>request::Parts,
+    ) -&gt; (<span class="self">Self</span>::RequestHandler, <span class="self">Self</span>::ResponseHandler) {
+        (ByteCounter::default(), ByteCounter::default())
+    }
+}
+
+<span class="kw">let </span>_layer = CallbackLayer::new(MakeByteCounter);</code></pre></div><h2 id="body-type-change"><a class="doc-anchor" href="#body-type-change">§</a>Body type change</h2>
+<p>The wrapped <a href="struct.Callback.html" title="struct sui_http::middleware::callback::Callback"><code>Callback</code></a> service hands the inner service a
+<code>Request&lt;RequestBody&lt;B, M::RequestHandler&gt;&gt;</code> rather than the original
+<code>Request&lt;B&gt;</code>. For body-polymorphic inner services (e.g. <code>axum::Router</code>
+or generic <code>tower</code> services), this is transparent.</p>
+<p>Monomorphic inner services that require a specific body type — for
+example <code>tonic::transport::Channel</code>, which expects <code>tonic::body::Body</code> —
+must rebox the wrapped body at the call site:</p>
+
+<div class="example-wrap ignore"><a href="#" class="tooltip" title="This example is not tested">ⓘ</a><pre class="rust rust-example-rendered"><code><span class="kw">let </span>service = tower::ServiceBuilder::new()
+    .layer(CallbackLayer::new(MakeByteCounter))
+    .map_request(|req: tonic::Request&lt;<span class="kw">_</span>&gt;| req.map(tonic::body::Body::new))
+    .service(tonic_service);</code></pre></div></div></details><h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2><dl class="item-table"><dt><a class="struct" href="struct.Callback.html" title="struct sui_http::middleware::callback::Callback">Callback</a></dt><dd>Middleware that adds callbacks to a <a href="tower::Service"><code>Service</code></a>.</dd><dt><a class="struct" href="struct.CallbackLayer.html" title="struct sui_http::middleware::callback::CallbackLayer">Callback<wbr>Layer</a></dt><dd><a href="tower::layer::Layer"><code>Layer</code></a> that adds callbacks to a <a href="tower::Service"><code>Service</code></a>.</dd><dt><a class="struct" href="struct.RequestBody.html" title="struct sui_http::middleware::callback::RequestBody">Request<wbr>Body</a></dt><dd>Request body wrapper for <a href="struct.Callback.html" title="struct sui_http::middleware::callback::Callback"><code>Callback</code></a>.</dd><dt><a class="struct" href="struct.ResponseBody.html" title="struct sui_http::middleware::callback::ResponseBody">Response<wbr>Body</a></dt><dd>Response body wrapper for <a href="struct.Callback.html" title="struct sui_http::middleware::callback::Callback"><code>Callback</code></a>.</dd><dt><a class="struct" href="struct.ResponseFuture.html" title="struct sui_http::middleware::callback::ResponseFuture">Response<wbr>Future</a></dt><dd>Response future for <a href="struct.Callback.html" title="struct sui_http::middleware::callback::Callback"><code>Callback</code></a>.</dd></dl><h2 id="traits" class="section-header">Traits<a href="#traits" class="anchor">§</a></h2><dl class="item-table"><dt><a class="trait" href="trait.MakeCallbackHandler.html" title="trait sui_http::middleware::callback::MakeCallbackHandler">Make<wbr>Callback<wbr>Handler</a></dt><dd>Factory for per-request callback handler pairs.</dd><dt><a class="trait" href="trait.RequestHandler.html" title="trait sui_http::middleware::callback::RequestHandler">Request<wbr>Handler</a></dt><dd>Observes the request body as it is polled by the inner service.</dd><dt><a class="trait" href="trait.ResponseHandler.html" title="trait sui_http::middleware::callback::ResponseHandler">Response<wbr>Handler</a></dt><dd>Observes the response as seen by the caller: the response parts, the
+response body, and the service-level error that occurs if the inner
+service’s future resolves to <code>Err</code> before any response is produced.</dd></dl></section></div></main></body></html>
