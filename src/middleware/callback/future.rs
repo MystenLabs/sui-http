@@ -44,11 +44,12 @@ where
                     ResponseBody {
                         inner: body,
                         handler,
+                        ended: false,
                     },
                 ))
             }
             Err(error) => {
-                handler.on_error(&error);
+                handler.on_service_error(&error);
                 Err(error)
             }
         };

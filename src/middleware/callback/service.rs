@@ -3,6 +3,7 @@
 
 use super::CallbackLayer;
 use super::MakeCallbackHandler;
+use super::RequestBody;
 use super::ResponseBody;
 use super::ResponseFuture;
 use http::Request;
@@ -57,33 +58,38 @@ impl<S, M> Callback<S, M> {
     }
 }
 
-impl<S, M, RequestBody, ResponseBodyT> Service<Request<RequestBody>> for Callback<S, M>
+impl<S, M, ReqBody, ResponseBodyT> Service<Request<ReqBody>> for Callback<S, M>
 where
     S: Service<
-            Request<RequestBody>,
+            Request<RequestBody<ReqBody, M::RequestHandler>>,
             Response = Response<ResponseBodyT>,
             Error: std::fmt::Display + 'static,
         >,
     M: MakeCallbackHandler,
-    RequestBody: http_body::Body<Error: std::fmt::Display + 'static>,
+    ReqBody: http_body::Body<Error: std::fmt::Display + 'static>,
     ResponseBodyT: http_body::Body<Error: std::fmt::Display + 'static>,
 {
-    type Response = Response<ResponseBody<ResponseBodyT, M::Handler>>;
+    type Response = Response<ResponseBody<ResponseBodyT, M::ResponseHandler>>;
     type Error = S::Error;
-    type Future = ResponseFuture<S::Future, M::Handler>;
+    type Future = ResponseFuture<S::Future, M::ResponseHandler>;
 
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.inner.poll_ready(cx)
     }
 
-    fn call(&mut self, request: Request<RequestBody>) -> Self::Future {
+    fn call(&mut self, request: Request<ReqBody>) -> Self::Future {
         let (head, body) = request.into_parts();
-        let handler = self.make_callback_handler.make_handler(&head);
-        let request = Request::from_parts(head, body);
+        let (req_handler, resp_handler) = self.make_callback_handler.make_handler(&head);
+        let wrapped_body = RequestBody {
+            inner: body,
+            handler: req_handler,
+            ended: false,
+        };
+        let request = Request::from_parts(head, wrapped_body);
 
         ResponseFuture {
             inner: self.inner.call(request),
-            handler: Some(handler),
+            handler: Some(resp_handler),
         }
     }
 }
