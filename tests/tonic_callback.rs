@@ -29,9 +29,7 @@ use std::task::Context;
 use std::task::Poll;
 use sui_http::middleware::callback::CallbackLayer;
 use sui_http::middleware::callback::MakeCallbackHandler;
-use sui_http::middleware::callback::RequestBody;
 use sui_http::middleware::callback::RequestHandler;
-use sui_http::middleware::callback::ResponseBody;
 use sui_http::middleware::callback::ResponseHandler;
 use tower::Service;
 use tower::ServiceBuilder;
@@ -143,9 +141,7 @@ async fn callback_layer_bridges_into_tonic_service() {
     //   4. GrpcEcho — the monomorphic "tonic" service.
     let mut stack = ServiceBuilder::new()
         .layer(CallbackLayer::new(recorder))
-        .map_request(|req: Request<RequestBody<Full<Bytes>, ReqH>>| {
-            req.map(tonic::body::Body::new)
-        })
+        .map_request(|req: Request<_>| req.map(tonic::body::Body::new))
         .map_response(|resp: Response<tonic::body::Body>| {
             // Identity in practice — included to show the symmetric
             // adaptation point for callers that further transform the
@@ -199,9 +195,7 @@ async fn callback_layer_observes_tonic_service_error() {
 
     let mut stack = ServiceBuilder::new()
         .layer(CallbackLayer::new(recorder))
-        .map_request(|req: Request<RequestBody<Full<Bytes>, ReqH>>| {
-            req.map(tonic::body::Body::new)
-        })
+        .map_request(|req: Request<_>| req.map(tonic::body::Body::new))
         .service(FailingGrpc);
 
     let request = Request::new(Full::new(Bytes::from_static(b"ping")));
@@ -239,16 +233,17 @@ async fn callback_layer_observes_tonic_service_error() {
 //
 // On the client side the middleware stack sits between a generated tonic
 // stub and `tonic::transport::Channel`. A stub like `GreeterClient<T>`
-// is generic over its transport `T`, but it requires `T` to implement
-// `Service<http::Request<tonic::body::Body>>` with a matching response —
-// exactly what `Channel` implements, and exactly the body-type
-// monomorphism that forced the rebox on the server side. Inserting
-// `CallbackLayer` between the stub and the channel therefore uses the
-// same bridge: a `map_request` that reboxes `RequestBody<_, _>` back
-// into `tonic::body::Body`. A user who also wants the stub to receive
-// `Response<tonic::body::Body>` (the shape `tonic::client::Grpc<T>`
-// expects) adds a `map_response` one-liner too; the example below does
-// both.
+// is generic over its transport `T` via `tonic::client::GrpcService`,
+// which is monomorphic on `tonic::body::Body` for the *request* body but
+// body-polymorphic on the *response* via an associated `type
+// ResponseBody: Body<_>`. That asymmetry means inserting `CallbackLayer`
+// between the stub and the channel only needs one bridge — a
+// `map_request` that reboxes `RequestBody<_, _>` back into
+// `tonic::body::Body` for the channel. The response-side wrapping
+// (`ResponseBody<tonic::body::Body, RespH>`) flows through the stub
+// unchanged, because the stub only requires that the response body
+// implement `Body<Data: Into<Bytes>>` — which our wrapper does. No
+// `map_response` is needed.
 
 /// A stand-in for [`tonic::transport::Channel`]. In real use, a
 /// `Channel` performs an HTTP/2 round-trip to a gRPC server; here we
@@ -288,30 +283,22 @@ async fn callback_layer_wraps_tonic_client_channel() {
 
     // Client-side stack. Order is outermost-first:
     //
-    //   1. `map_response` reboxes `ResponseBody<tonic::body::Body, _>`
-    //      back to `tonic::body::Body` so the outer caller (a tonic
-    //      stub, or `tonic::client::Grpc::new(_)`) sees the body type
-    //      it expects.
-    //   2. `CallbackLayer` wraps the outbound request body and observes
+    //   1. `CallbackLayer` wraps the outbound request body and observes
     //      the inbound response body.
-    //   3. `map_request` reboxes the wrapped body back to
+    //   2. `map_request` reboxes the wrapped body back to
     //      `tonic::body::Body` for the channel.
-    //   4. `MockChannel` stands in for `tonic::transport::Channel`.
+    //   3. `MockChannel` stands in for `tonic::transport::Channel`.
     //
     // The resulting `client` is a
-    // `Service<Request<tonic::body::Body>, Response = Response<tonic::body::Body>>`
-    // — exactly the shape a generated `...Client<T>` stub will accept
-    // as its transport.
+    // `Service<Request<tonic::body::Body>, Response =
+    // Response<ResponseBody<tonic::body::Body, RespH>>>`. A generated
+    // `...Client<T>` stub accepts this: `tonic::client::GrpcService<B>`
+    // requires the associated `ResponseBody` to implement
+    // `Body<Data: Into<Bytes>>`, and our `ResponseBody` wrapper does
+    // (it forwards `Data = Bytes`). No `map_response` rebox is needed.
     let mut client = ServiceBuilder::new()
-        .map_response(
-            |resp: Response<ResponseBody<tonic::body::Body, RespH>>| {
-                resp.map(tonic::body::Body::new)
-            },
-        )
         .layer(CallbackLayer::new(recorder))
-        .map_request(|req: Request<RequestBody<tonic::body::Body, ReqH>>| {
-            req.map(tonic::body::Body::new)
-        })
+        .map_request(|req: Request<_>| req.map(tonic::body::Body::new))
         .service(MockChannel);
 
     // Send a request the way a generated stub would: wrapped in
@@ -364,9 +351,7 @@ async fn callback_layer_observes_tonic_client_channel_error() {
 
     let mut client = ServiceBuilder::new()
         .layer(CallbackLayer::new(recorder))
-        .map_request(|req: Request<RequestBody<tonic::body::Body, ReqH>>| {
-            req.map(tonic::body::Body::new)
-        })
+        .map_request(|req: Request<_>| req.map(tonic::body::Body::new))
         .service(UnreachableChannel);
 
     let request = Request::new(tonic::body::Body::new(Full::new(Bytes::from_static(

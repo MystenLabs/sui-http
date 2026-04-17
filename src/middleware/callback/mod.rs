@@ -76,8 +76,10 @@
 //! must rebox the wrapped body at the call site:
 //!
 //! ```ignore
-//! let wrapped: RequestBody<_, _> = /* received */;
-//! let reboxed = tonic::body::Body::new(wrapped);
+//! let service = tower::ServiceBuilder::new()
+//!     .layer(CallbackLayer::new(MakeByteCounter))
+//!     .map_request(|req: tonic::Request<_>| req.map(tonic::body::Body::new))
+//!     .service(tonic_service);
 //! ```
 //!
 //! [`Callback`]: self::Callback
