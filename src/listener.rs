@@ -61,10 +61,11 @@ impl Listener for tokio::net::TcpListener {
     type Addr = std::net::SocketAddr;
 
     async fn accept(&mut self) -> (Self::Io, Self::Addr) {
+        let mut backoff = AcceptBackoff::new();
         loop {
             match Self::accept(self).await {
                 Ok(tup) => return tup,
-                Err(e) => handle_accept_error(e).await,
+                Err(e) => backoff.handle_accept_error(e).await,
             }
         }
     }
@@ -200,24 +201,41 @@ where
     }
 }
 
-async fn handle_accept_error(e: std::io::Error) {
-    if is_connection_error(&e) {
-        return;
+/// Exponential backoff for recoverable `accept()` errors.
+///
+/// Certain errors (notably `EMFILE`/`ENFILE`, when the process has exhausted its
+/// file descriptor limit) leave the listener in a persistently-readable state,
+/// causing `accept()` to return immediately on retry. Without backoff the serve
+/// loop would spin a CPU core and flood logs.
+///
+/// A fixed 1 second sleep (as in hyper 0.14 and still in axum today) avoids the
+/// spin but delays recovery once descriptors free up. Instead we follow Go's
+/// `net/http` and HashiCorp Vault: start at 5ms and double on each consecutive
+/// error, capped at 1 second. Reset-on-success is implicit because a fresh
+/// `AcceptBackoff` is constructed per call to `accept()`.
+struct AcceptBackoff {
+    next_delay: Duration,
+}
+
+impl AcceptBackoff {
+    const MIN: Duration = Duration::from_millis(5);
+    const MAX: Duration = Duration::from_secs(1);
+
+    fn new() -> Self {
+        Self {
+            next_delay: Self::MIN,
+        }
     }
 
-    // [From `hyper::Server` in 0.14](https://github.com/hyperium/hyper/blob/v0.14.27/src/server/tcp.rs#L186)
-    //
-    // > A possible scenario is that the process has hit the max open files
-    // > allowed, and so trying to accept a new connection will fail with
-    // > `EMFILE`. In some cases, it's preferable to just wait for some time, if
-    // > the application will likely close some files (or connections), and try
-    // > to accept the connection again. If this option is `true`, the error
-    // > will be logged at the `error` level, since it is still a big deal,
-    // > and then the listener will sleep for 1 second.
-    //
-    // hyper allowed customizing this but axum does not.
-    tracing::error!("accept error: {e}");
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    async fn handle_accept_error(&mut self, e: std::io::Error) {
+        if is_connection_error(&e) {
+            return;
+        }
+
+        tracing::error!(backoff = ?self.next_delay, "accept error: {e}");
+        tokio::time::sleep(self.next_delay).await;
+        self.next_delay = (self.next_delay * 2).min(Self::MAX);
+    }
 }
 
 fn is_connection_error(e: &std::io::Error) -> bool {
