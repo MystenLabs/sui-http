@@ -4,7 +4,6 @@
 use super::RequestHandler;
 use super::ResponseHandler;
 use http_body::Body;
-use http_body::Frame;
 use pin_project_lite::pin_project;
 use std::fmt;
 use std::pin::Pin;
@@ -43,30 +42,20 @@ where
     fn poll_frame(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-    ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
+    ) -> Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
         let this = self.project();
         let result = ready!(this.inner.poll_frame(cx));
 
         match result {
             Some(Ok(frame)) => {
-                let frame = match frame.into_data() {
-                    Ok(chunk) => {
-                        this.handler.on_body_chunk(&chunk);
-                        Frame::data(chunk)
-                    }
-                    Err(frame) => frame,
-                };
-
-                let frame = match frame.into_trailers() {
-                    Ok(trailers) => {
-                        if !*this.ended {
-                            this.handler.on_end_of_stream(Some(&trailers));
-                            *this.ended = true;
-                        }
-                        Frame::trailers(trailers)
-                    }
-                    Err(frame) => frame,
-                };
+                if let Some(chunk) = frame.data_ref() {
+                    this.handler.on_body_chunk(chunk);
+                } else if let Some(trailers) = frame.trailers_ref()
+                    && !*this.ended
+                {
+                    this.handler.on_end_of_stream(Some(trailers));
+                    *this.ended = true;
+                }
 
                 Poll::Ready(Some(Ok(frame)))
             }
@@ -123,30 +112,20 @@ where
     fn poll_frame(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-    ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
+    ) -> Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
         let this = self.project();
         let result = ready!(this.inner.poll_frame(cx));
 
         match result {
             Some(Ok(frame)) => {
-                let frame = match frame.into_data() {
-                    Ok(chunk) => {
-                        this.handler.on_body_chunk(&chunk);
-                        Frame::data(chunk)
-                    }
-                    Err(frame) => frame,
-                };
-
-                let frame = match frame.into_trailers() {
-                    Ok(trailers) => {
-                        if !*this.ended {
-                            this.handler.on_end_of_stream(Some(&trailers));
-                            *this.ended = true;
-                        }
-                        Frame::trailers(trailers)
-                    }
-                    Err(frame) => frame,
-                };
+                if let Some(chunk) = frame.data_ref() {
+                    this.handler.on_body_chunk(chunk);
+                } else if let Some(trailers) = frame.trailers_ref()
+                    && !*this.ended
+                {
+                    this.handler.on_end_of_stream(Some(trailers));
+                    *this.ended = true;
+                }
 
                 Poll::Ready(Some(Ok(frame)))
             }
