@@ -3,7 +3,9 @@
 
 use std::time::Duration;
 
+const DEFAULT_HTTP2_KEEPALIVE_INTERVAL_SECS: u64 = 60;
 const DEFAULT_HTTP2_KEEPALIVE_TIMEOUT_SECS: u64 = 20;
+const DEFAULT_TCP_KEEPALIVE_SECS: u64 = 60;
 // Matches hyper's post-Rapid-Reset (CVE-2023-44487) hardened default.
 const DEFAULT_MAX_CONCURRENT_STREAMS: u32 = 200;
 const DEFAULT_TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -35,9 +37,11 @@ impl Default for Config {
             init_stream_window_size: None,
             init_connection_window_size: None,
             max_concurrent_streams: Some(DEFAULT_MAX_CONCURRENT_STREAMS),
-            tcp_keepalive: None,
+            tcp_keepalive: Some(Duration::from_secs(DEFAULT_TCP_KEEPALIVE_SECS)),
             tcp_nodelay: true,
-            http2_keepalive_interval: None,
+            http2_keepalive_interval: Some(Duration::from_secs(
+                DEFAULT_HTTP2_KEEPALIVE_INTERVAL_SECS,
+            )),
             http2_keepalive_timeout: None,
             http2_adaptive_window: None,
             http2_max_pending_accept_reset_streams: None,
@@ -110,7 +114,9 @@ impl Config {
     /// The timeout for receiving an acknowledgement of the keepalive ping
     /// can be set with [`Config::http2_keepalive_timeout`].
     ///
-    /// Default is no HTTP2 keepalive (`None`)
+    /// Default is a 60 second interval, so dead connections are detected
+    /// and reclaimed instead of lingering until the peer sends a TCP RST
+    /// (which may never happen).
     pub fn http2_keepalive_interval(self, http2_keepalive_interval: Option<Duration>) -> Self {
         Self {
             http2_keepalive_interval,
@@ -159,7 +165,9 @@ impl Config {
     /// specified will be the time to remain idle before sending TCP keepalive
     /// probes.
     ///
-    /// Default is no keepalive (`None`)
+    /// Default is a 60 second idle time, so connections whose peer has
+    /// vanished (crashed host, dropped NAT entry) are detected at the
+    /// transport layer even for protocols without their own keepalive.
     pub fn tcp_keepalive(self, tcp_keepalive: Option<Duration>) -> Self {
         Self {
             tcp_keepalive,
@@ -282,5 +290,18 @@ mod tests {
     fn default_advertises_a_concurrent_stream_limit() {
         let config = Config::default();
         assert_eq!(config.max_concurrent_streams, Some(200));
+    }
+
+    /// Without keepalives, a connection whose peer has vanished (or whose
+    /// transport is wedged) is never detected and lingers forever. Pin the
+    /// defaults so they cannot silently regress to disabled.
+    #[test]
+    fn default_enables_keepalives() {
+        let config = Config::default();
+        assert_eq!(
+            config.http2_keepalive_interval,
+            Some(Duration::from_secs(60))
+        );
+        assert_eq!(config.tcp_keepalive, Some(Duration::from_secs(60)));
     }
 }

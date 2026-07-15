@@ -15,6 +15,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   post-Rapid-Reset limit and advertised unlimited concurrent streams per
   connection. Unlimited streams now require an explicit
   `max_concurrent_streams(None)` opt-in.
+- **Breaking:** `Config::default()` now enables HTTP/2 keepalive with a
+  60 second ping interval (the existing 20 second acknowledgement
+  timeout applies) and TCP keepalive with a 60 second idle time.
+  Previously both were disabled, so a connection whose peer vanished was
+  never detected and lingered forever. Pass `None` to the corresponding
+  setters to restore the old behavior.
 - The minimum supported `hyper` version is raised from 1.0 to 1.10. This
   keeps downstream consumers from resolving `h2` versions older than
   0.4.14, which have flow-control accounting bugs that can permanently
