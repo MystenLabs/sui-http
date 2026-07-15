@@ -282,6 +282,13 @@ impl Config {
 
     /// Allow this accepting http1 requests.
     ///
+    /// When `false`, plain-text connections are served in HTTP/2-only
+    /// (prior knowledge) mode: the protocol sniff is skipped and anything
+    /// that is not an HTTP/2 preface is rejected at the transport level.
+    /// TLS connections additionally stop advertising `http/1.1` via ALPN.
+    /// hyper's HTTP/1 upgrade mechanism is unavailable in this mode;
+    /// HTTP/2 extended CONNECT is unaffected.
+    ///
     /// Default is `true`.
     pub fn accept_http1(self, accept_http1: bool) -> Self {
         Config {

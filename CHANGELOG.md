@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `Config::accept_http1(false)` is now enforced for plain-text
+  connections. hyper-util's `serve_connection_with_upgrades` always
+  sniffs the protocol and silently ignores `http2_only()`, so HTTP/1.1
+  clients were served normally despite the setting. HTTP/2-only configs
+  now serve connections through `serve_connection`, which honors the
+  pinned protocol version, skips the sniff entirely, and rejects
+  anything that is not an HTTP/2 preface. Callers whose HTTP/1 clients
+  worked against an `accept_http1(false)` server by accident will now
+  see those connections refused. hyper's HTTP/1 upgrade mechanism is
+  unavailable in this mode; HTTP/2 extended CONNECT is unaffected.
 - The HTTP/1 header read timeout is now armed. hyper defaults it to 30
   seconds but silently disables it when no timer is configured on the
   HTTP/1 side of the connection builder, which is the state sui-http was

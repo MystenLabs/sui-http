@@ -1,11 +1,15 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+use std::future::Future;
+use std::pin::Pin;
 use std::pin::pin;
 use std::time::Duration;
 
 use http::Request;
 use http::Response;
+use hyper_util::rt::TokioExecutor;
+use hyper_util::server::conn::auto;
 use tracing::debug;
 use tracing::trace;
 
@@ -19,7 +23,7 @@ use crate::fuse::Fuse;
 pub async fn serve_connection<IO, S, B, C>(
     hyper_io: IO,
     hyper_svc: S,
-    builder: hyper_util::server::conn::auto::Builder<hyper_util::rt::TokioExecutor>,
+    builder: auto::Builder<TokioExecutor>,
     graceful_shutdown_token: tokio_util::sync::CancellationToken,
     max_connection_age: Option<Duration>,
     max_connection_age_grace: Option<Duration>,
@@ -33,9 +37,82 @@ pub async fn serve_connection<IO, S, B, C>(
     S::Future: Send + 'static,
     S::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
 {
-    let mut sig = pin!(Fuse::new(graceful_shutdown_token.cancelled_owned()));
+    // `serve_connection_with_upgrades` always sniffs the protocol from the
+    // first bytes and silently ignores `http2_only`, so an HTTP/2-only
+    // builder must use `serve_connection`, where the pinned version is
+    // honored, the sniff is skipped, and anything that is not an HTTP/2
+    // preface is rejected. The upgrades variant differs only in its HTTP/1
+    // arm (hyper's `with_upgrades` wrapper); HTTP/2 extended CONNECT
+    // behaves identically on both paths.
+    if builder.is_http1_available() {
+        let conn = pin!(builder.serve_connection_with_upgrades(hyper_io, hyper_svc));
+        drive_connection(
+            conn,
+            graceful_shutdown_token,
+            max_connection_age,
+            max_connection_age_grace,
+        )
+        .await;
+    } else {
+        let conn = pin!(builder.serve_connection(hyper_io, hyper_svc));
+        drive_connection(
+            conn,
+            graceful_shutdown_token,
+            max_connection_age,
+            max_connection_age_grace,
+        )
+        .await;
+    }
 
-    let mut conn = pin!(builder.serve_connection_with_upgrades(hyper_io, hyper_svc));
+    trace!("connection closed");
+    drop(on_connection_close);
+}
+
+/// The connection future types produced by hyper-util's auto builder,
+/// unified so [`drive_connection`] can drive either.
+trait GracefulConnection: Future<Output = Result<(), BoxError>> {
+    fn graceful_shutdown(self: Pin<&mut Self>);
+}
+
+impl<IO, S, B> GracefulConnection for auto::Connection<'_, IO, S, TokioExecutor>
+where
+    B: http_body::Body + Send + 'static,
+    B::Data: Send,
+    B::Error: Into<BoxError>,
+    IO: hyper::rt::Read + hyper::rt::Write + Unpin + 'static,
+    S: hyper::service::Service<Request<hyper::body::Incoming>, Response = Response<B>>,
+    S::Future: Send + 'static,
+    S::Error: Into<BoxError>,
+{
+    fn graceful_shutdown(self: Pin<&mut Self>) {
+        auto::Connection::graceful_shutdown(self)
+    }
+}
+
+impl<IO, S, B> GracefulConnection for auto::UpgradeableConnection<'_, IO, S, TokioExecutor>
+where
+    B: http_body::Body + Send + 'static,
+    B::Data: Send,
+    B::Error: Into<BoxError>,
+    IO: hyper::rt::Read + hyper::rt::Write + Send + Unpin + 'static,
+    S: hyper::service::Service<Request<hyper::body::Incoming>, Response = Response<B>>,
+    S::Future: Send + 'static,
+    S::Error: Into<BoxError>,
+{
+    fn graceful_shutdown(self: Pin<&mut Self>) {
+        auto::UpgradeableConnection::graceful_shutdown(self)
+    }
+}
+
+async fn drive_connection<C>(
+    mut conn: Pin<&mut C>,
+    graceful_shutdown_token: tokio_util::sync::CancellationToken,
+    max_connection_age: Option<Duration>,
+    max_connection_age_grace: Option<Duration>,
+) where
+    C: GracefulConnection,
+{
+    let mut sig = pin!(Fuse::new(graceful_shutdown_token.cancelled_owned()));
 
     let sleep = sleep_or_pending(max_connection_age);
     tokio::pin!(sleep);
@@ -77,9 +154,6 @@ pub async fn serve_connection<IO, S, B, C>(
             },
         }
     }
-
-    trace!("connection closed");
-    drop(on_connection_close);
 }
 
 async fn sleep_or_pending(wait_for: Option<Duration>) {
