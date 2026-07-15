@@ -17,8 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `Config::max_connection_age_grace` bounds how long a connection may
-  take to finish its in-flight requests after `max_connection_age`
-  triggers a graceful shutdown (GOAWAY); once the grace period expires
+  take to finish its in-flight requests after a graceful shutdown is
+  initiated -- by `max_connection_age` expiring (GOAWAY),
+  `ConnectionInfo::close`, or `ServerHandle::trigger_shutdown`; once the
+  grace period expires
   the connection is forcefully closed, following the semantics of
   grpc-go's `MAX_CONNECTION_AGE_GRACE`. This is the only server-side
   mechanism that reclaims streams wedged on HTTP/2 flow control (a

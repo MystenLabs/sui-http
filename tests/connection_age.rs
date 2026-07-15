@@ -113,6 +113,52 @@ async fn age_with_grace_reclaims_send_stalled_connection() {
     drop(send_request);
 }
 
+/// A graceful shutdown triggered through `ConnectionInfo::close` (no
+/// connection age involved) must also be bounded by the grace period;
+/// otherwise a wedged stream survives `close()` forever.
+#[tokio::test]
+async fn close_with_grace_force_closes_wedged_connection() {
+    let app = axum::Router::new().route(
+        "/",
+        axum::routing::get(|| async { std::future::pending::<String>().await }),
+    );
+
+    let config = Config::default().max_connection_age_grace(Duration::from_millis(300));
+    let handle = sui_http::Builder::new()
+        .config(config)
+        .serve(("localhost", 0), app)
+        .unwrap();
+
+    let client = reqwest::Client::builder()
+        .http2_prior_knowledge()
+        .build()
+        .unwrap();
+    let url = format!("http://{}", handle.local_addr());
+    let request = tokio::spawn(client.get(url).send());
+
+    // Wait for the wedged request's connection to be established, then
+    // close it.
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while handle.number_of_connections() == 0 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("connection was never established");
+    for connection in handle.connections().values() {
+        connection.close();
+    }
+
+    // The request must resolve with an error once the grace period
+    // expires, rather than hanging forever on the wedged handler.
+    let result = tokio::time::timeout(Duration::from_secs(10), request)
+        .await
+        .expect("request hung: connection was never force-closed")
+        .unwrap();
+    assert!(result.is_err());
+    wait_for_no_connections(&handle).await;
+}
+
 /// Without a grace period, an age-triggered graceful shutdown must keep
 /// waiting for in-flight requests instead of dropping them.
 #[tokio::test]
