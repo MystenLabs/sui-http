@@ -89,11 +89,42 @@ impl TcpListenerWithOptions {
         nodelay: bool,
         keepalive: Option<Duration>,
     ) -> Result<Self, crate::BoxError> {
-        let std_listener = std::net::TcpListener::bind(addr)?;
-        std_listener.set_nonblocking(true)?;
-        let listener = tokio::net::TcpListener::from_std(std_listener)?;
+        let mut last_error = None;
+        for addr in addr.to_socket_addrs()? {
+            match Self::bind(addr) {
+                Ok(listener) => return Ok(Self::from_listener(listener, nodelay, keepalive)),
+                Err(e) => last_error = Some(e),
+            }
+        }
 
-        Ok(Self::from_listener(listener, nodelay, keepalive))
+        Err(last_error
+            .unwrap_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "could not resolve to any address",
+                )
+            })
+            .into())
+    }
+
+    fn bind(addr: std::net::SocketAddr) -> std::io::Result<tokio::net::TcpListener> {
+        let socket = socket2::Socket::new(
+            socket2::Domain::for_address(addr),
+            socket2::Type::STREAM,
+            Some(socket2::Protocol::TCP),
+        )?;
+
+        // Match tokio's `TcpListener::bind`: SO_REUSEADDR allows rebinding
+        // the port immediately after a restart, while connections from the
+        // previous process linger in TIME_WAIT. Not set on Windows, where
+        // the flag instead allows stealing a port that is actively bound.
+        #[cfg(not(windows))]
+        socket.set_reuse_address(true)?;
+        socket.set_nonblocking(true)?;
+        socket.bind(&addr.into())?;
+        socket.listen(1024)?;
+
+        tokio::net::TcpListener::from_std(socket.into())
     }
 
     /// Creates a new `TcpIncoming` from an existing `tokio::net::TcpListener`.
@@ -253,4 +284,21 @@ fn is_connection_error(e: &std::io::Error) -> bool {
             | ErrorKind::WouldBlock
             | ErrorKind::TimedOut
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Whether an immediate rebind after shutdown succeeds while old
+    /// connections sit in TIME_WAIT is platform dependent, so the
+    /// end-to-end scenario cannot deterministically catch a missing
+    /// SO_REUSEADDR everywhere. Assert the socket option directly.
+    #[cfg(not(windows))]
+    #[tokio::test]
+    async fn listener_sets_reuse_address() {
+        let listener = TcpListenerWithOptions::new(("localhost", 0), true, None).unwrap();
+        let sock_ref = socket2::SockRef::from(&listener.inner);
+        assert!(sock_ref.reuse_address().unwrap());
+    }
 }
