@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["Callback","CallbackLayer","RequestBody","ResponseBody","ResponseFuture"],"trait":["MakeCallbackHandler","RequestHandler","ResponseHandler"]};
