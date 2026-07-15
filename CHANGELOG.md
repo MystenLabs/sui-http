@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The HTTP/1 header read timeout is now armed. hyper defaults it to 30
+  seconds but silently disables it when no timer is configured on the
+  HTTP/1 side of the connection builder, which is the state sui-http was
+  in: a client sending a partial request and going silent (slowloris)
+  held its socket open indefinitely. The timer is now always set, and
+  the new `Config::http1_header_read_timeout` tunes or disables the
+  timeout (default 30 seconds, matching hyper).
 - The listener now sets `SO_REUSEADDR` before binding (except on
   Windows), matching `tokio::net::TcpListener::bind`. Previously a fast
   restart could fail with `EADDRINUSE` while connections from the
