@@ -5,6 +5,16 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- The minimum supported `hyper` version is raised from 1.0 to 1.10. This
+  keeps downstream consumers from resolving `h2` versions older than
+  0.4.14, which have flow-control accounting bugs that can permanently
+  wedge a connection when streams are cancelled (hyperium/h2 #893, #896,
+  #897, #898, and #913, fixed in 0.4.14 and 0.4.15).
+
 ## [0.2.0] - 2026-04-17
 
 ### Added

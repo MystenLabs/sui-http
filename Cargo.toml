@@ -29,7 +29,10 @@ bytes = "1"
 http = "1"
 http-body = "1"
 http-body-util = "0.1"
-hyper = { version = "1", features = ["http1", "http2"] }
+# The 1.10 floor keeps downstream consumers from resolving h2 < 0.4.14,
+# which has connection-wedging flow-control accounting bugs (hyperium/h2
+# #893, #896, #897, #898, #913, fixed in 0.4.14 and 0.4.15).
+hyper = { version = "1.10", features = ["http1", "http2"] }
 hyper-util = { version = "0.1.4", features = ["tokio", "server-auto", "service"] }
 pin-project-lite = "0.2.15"
 socket2 = { version = "0.6", features = ["all"] }
