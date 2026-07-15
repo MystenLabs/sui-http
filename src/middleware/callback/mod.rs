@@ -314,12 +314,10 @@ mod tests {
         let recorder = Recorder::default();
         let events = recorder.0.clone();
 
-        let inner = tower::service_fn(
-            |req: Request<RequestBody<Full<Bytes>, ReqH>>| async move {
-                drain(req.into_body()).await.unwrap();
-                Ok::<_, Infallible>(Response::new(Full::new(Bytes::from_static(b"ok"))))
-            },
-        );
+        let inner = tower::service_fn(|req: Request<RequestBody<Full<Bytes>, ReqH>>| async move {
+            drain(req.into_body()).await.unwrap();
+            Ok::<_, Infallible>(Response::new(Full::new(Bytes::from_static(b"ok"))))
+        });
         let svc = ServiceBuilder::new()
             .layer(CallbackLayer::new(recorder))
             .service(inner);
@@ -449,12 +447,10 @@ mod tests {
         let counter = Arc::new(Mutex::new(0));
         let make = MakeResponseOnly(counter.clone());
 
-        let inner = tower::service_fn(
-            |req: Request<RequestBody<Full<Bytes>, ()>>| async move {
-                drain(req.into_body()).await.unwrap();
-                Ok::<_, Infallible>(Response::new(Full::new(Bytes::from_static(b"hi"))))
-            },
-        );
+        let inner = tower::service_fn(|req: Request<RequestBody<Full<Bytes>, ()>>| async move {
+            drain(req.into_body()).await.unwrap();
+            Ok::<_, Infallible>(Response::new(Full::new(Bytes::from_static(b"hi"))))
+        });
         let svc = ServiceBuilder::new()
             .layer(CallbackLayer::new(make))
             .service(inner);
@@ -530,16 +526,14 @@ mod tests {
         let recorder = Recorder::default();
         let events = recorder.0.clone();
 
-        let inner = tower::service_fn(
-            |req: Request<RequestBody<Full<Bytes>, ReqH>>| async move {
-                drain(req.into_body()).await.unwrap();
-                let frames: Vec<Result<http_body::Frame<Bytes>, BodyErr>> = vec![
-                    Ok(http_body::Frame::data(Bytes::from_static(b"partial"))),
-                    Err(BodyErr),
-                ];
-                Ok::<_, Infallible>(Response::new(StreamBody::new(stream::iter(frames))))
-            },
-        );
+        let inner = tower::service_fn(|req: Request<RequestBody<Full<Bytes>, ReqH>>| async move {
+            drain(req.into_body()).await.unwrap();
+            let frames: Vec<Result<http_body::Frame<Bytes>, BodyErr>> = vec![
+                Ok(http_body::Frame::data(Bytes::from_static(b"partial"))),
+                Err(BodyErr),
+            ];
+            Ok::<_, Infallible>(Response::new(StreamBody::new(stream::iter(frames))))
+        });
         let svc = ServiceBuilder::new()
             .layer(CallbackLayer::new(recorder))
             .service(inner);
@@ -574,11 +568,9 @@ mod tests {
         let recorder = Recorder::default();
         let events = recorder.0.clone();
 
-        let inner = tower::service_fn(
-            |_req: Request<RequestBody<Full<Bytes>, ReqH>>| async move {
-                Err::<Response<Full<Bytes>>, _>(SvcErr)
-            },
-        );
+        let inner = tower::service_fn(|_req: Request<RequestBody<Full<Bytes>, ReqH>>| async move {
+            Err::<Response<Full<Bytes>>, _>(SvcErr)
+        });
         let svc = ServiceBuilder::new()
             .layer(CallbackLayer::new(recorder))
             .service(inner);
