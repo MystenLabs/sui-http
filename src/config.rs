@@ -62,7 +62,9 @@ impl Config {
     /// Sets the [`SETTINGS_INITIAL_WINDOW_SIZE`][spec] option for HTTP2
     /// stream-level flow control.
     ///
-    /// Default is 65,535
+    /// If `None` is specified, hyper's default is used (currently 1 MiB;
+    /// the HTTP/2 spec default of 65,535 bytes only applies to
+    /// implementations that never adjust it).
     ///
     /// [spec]: https://httpwg.org/specs/rfc9113.html#InitialWindowSize
     pub fn initial_stream_window_size(self, sz: impl Into<Option<u32>>) -> Self {
@@ -74,7 +76,13 @@ impl Config {
 
     /// Sets the max connection-level flow control for HTTP2
     ///
-    /// Default is 65,535
+    /// If `None` is specified, hyper's default is used (currently 1 MiB).
+    ///
+    /// Note that hyper's default equals the per-stream window, so a single
+    /// stream stalled mid-upload can pin the entire connection receive
+    /// window and starve every other stream on the connection. Workloads
+    /// with large or streaming request bodies should consider raising this
+    /// to a multiple of the stream window.
     pub fn initial_connection_window_size(self, sz: impl Into<Option<u32>>) -> Self {
         Self {
             init_connection_window_size: sz.into(),
