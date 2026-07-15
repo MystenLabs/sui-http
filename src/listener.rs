@@ -111,7 +111,9 @@ impl TcpListenerWithOptions {
 
     // Consistent with hyper-0.14, this function does not return an error.
     fn set_accepted_socket_options(&self, stream: &tokio::net::TcpStream) {
-        if self.nodelay && let Err(e) = stream.set_nodelay(true) {
+        if self.nodelay
+            && let Err(e) = stream.set_nodelay(true)
+        {
             tracing::warn!("error trying to set TCP nodelay: {}", e);
         }
 
