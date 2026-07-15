@@ -22,6 +22,7 @@ pub async fn serve_connection<IO, S, B, C>(
     builder: hyper_util::server::conn::auto::Builder<hyper_util::rt::TokioExecutor>,
     graceful_shutdown_token: tokio_util::sync::CancellationToken,
     max_connection_age: Option<Duration>,
+    max_connection_age_grace: Option<Duration>,
     on_connection_close: C,
 ) where
     B: http_body::Body + Send + 'static,
@@ -38,6 +39,7 @@ pub async fn serve_connection<IO, S, B, C>(
 
     let sleep = sleep_or_pending(max_connection_age);
     tokio::pin!(sleep);
+    let mut in_grace_period = false;
 
     loop {
         tokio::select! {
@@ -51,8 +53,18 @@ pub async fn serve_connection<IO, S, B, C>(
                 break;
             },
             _ = &mut sleep  => {
+                if in_grace_period {
+                    // The grace period expired with streams still in
+                    // flight. A stream wedged on flow control (e.g. a
+                    // stalled peer that never reopens its receive window)
+                    // can never complete a graceful shutdown, so dropping
+                    // the connection is the only way to reclaim it.
+                    debug!("max connection age grace period expired, closing connection");
+                    break;
+                }
                 conn.as_mut().graceful_shutdown();
-                sleep.set(sleep_or_pending(None));
+                in_grace_period = true;
+                sleep.set(sleep_or_pending(max_connection_age_grace));
             },
         }
     }

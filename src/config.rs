@@ -27,6 +27,7 @@ pub struct Config {
     pub(crate) accept_http1: bool,
     enable_connect_protocol: bool,
     pub(crate) max_connection_age: Option<Duration>,
+    pub(crate) max_connection_age_grace: Option<Duration>,
     pub(crate) tls_handshake_timeout: Duration,
     pub(crate) max_pending_connections: usize,
 }
@@ -50,6 +51,7 @@ impl Default for Config {
             accept_http1: true,
             enable_connect_protocol: true,
             max_connection_age: None,
+            max_connection_age_grace: None,
             tls_handshake_timeout: DEFAULT_TLS_HANDSHAKE_TIMEOUT,
             max_pending_connections: DEFAULT_MAX_PENDING_CONNECTIONS,
         }
@@ -99,10 +101,39 @@ impl Config {
 
     /// Sets the maximum time option in milliseconds that a connection may exist
     ///
+    /// When a connection reaches its maximum age it is shut down
+    /// gracefully: for HTTP/2 a GOAWAY is sent, and in-flight requests are
+    /// allowed to complete. See [`Config::max_connection_age_grace`] for
+    /// bounding how long that completion may take.
+    ///
     /// Default is no limit (`None`).
     pub fn max_connection_age(self, max_connection_age: Duration) -> Self {
         Self {
             max_connection_age: Some(max_connection_age),
+            ..self
+        }
+    }
+
+    /// Sets the grace period allowed after [`Config::max_connection_age`]
+    /// before the connection is forcefully closed.
+    ///
+    /// A graceful shutdown waits for in-flight requests to complete, but a
+    /// stream that can make no progress -- for example, a response wedged
+    /// behind HTTP/2 flow-control windows that a stalled or vanished peer
+    /// never reopens -- would keep the connection alive forever. Once the
+    /// grace period expires the connection is dropped along with any
+    /// streams still in flight, following the semantics of grpc-go's
+    /// `MAX_CONNECTION_AGE_GRACE`. This is the only server-side mechanism
+    /// that reclaims send-stalled streams: middleware cannot do it because
+    /// the response body is no longer polled once the stream stalls.
+    ///
+    /// Does nothing unless [`Config::max_connection_age`] is also set.
+    ///
+    /// Default is an unlimited grace period (`None`): the connection stays
+    /// open until every in-flight request completes.
+    pub fn max_connection_age_grace(self, max_connection_age_grace: Duration) -> Self {
+        Self {
+            max_connection_age_grace: Some(max_connection_age_grace),
             ..self
         }
     }
