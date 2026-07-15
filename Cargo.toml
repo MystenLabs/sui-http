@@ -48,8 +48,11 @@ futures-core = "0.3.31"
 [dev-dependencies]
 axum = { version = "0.8" }
 futures = "0.3"
+# Raw h2 client for tests that must drive a single HTTP/2 connection
+# directly (pooled clients hide per-connection behavior).
+h2 = "0.4"
 reqwest = { version = "0.12", default-features = false, features = [ "http2", "json", "rustls-tls" ] }
-tokio = { version = "1.36.0", default-features = false, features = ["macros", "net", "rt-multi-thread"] }
+tokio = { version = "1.36.0", default-features = false, features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
 tonic = { version = "0.14", default-features = false, features = ["transport"] }
 
 [lints.rust]

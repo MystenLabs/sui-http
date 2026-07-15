@@ -4,6 +4,8 @@
 use std::time::Duration;
 
 const DEFAULT_HTTP2_KEEPALIVE_TIMEOUT_SECS: u64 = 20;
+// Matches hyper's post-Rapid-Reset (CVE-2023-44487) hardened default.
+const DEFAULT_MAX_CONCURRENT_STREAMS: u32 = 200;
 const DEFAULT_TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 const DEFAULT_MAX_PENDING_CONNECTIONS: usize = 4096;
 
@@ -32,7 +34,7 @@ impl Default for Config {
         Self {
             init_stream_window_size: None,
             init_connection_window_size: None,
-            max_concurrent_streams: None,
+            max_concurrent_streams: Some(DEFAULT_MAX_CONCURRENT_STREAMS),
             tcp_keepalive: None,
             tcp_nodelay: true,
             http2_keepalive_interval: None,
@@ -77,7 +79,11 @@ impl Config {
     /// Sets the [`SETTINGS_MAX_CONCURRENT_STREAMS`][spec] option for HTTP2
     /// connections.
     ///
-    /// Default is no limit (`None`).
+    /// Default is 200, matching hyper's hardened default. Passing `None`
+    /// removes the limit entirely and advertises unlimited concurrent
+    /// streams to the peer; this makes the server vulnerable to
+    /// Rapid-Reset-style resource exhaustion and should be an explicit,
+    /// deliberate choice.
     ///
     /// [spec]: https://httpwg.org/specs/rfc9113.html#n-stream-concurrency
     pub fn max_concurrent_streams(self, max: impl Into<Option<u32>>) -> Self {
@@ -261,5 +267,20 @@ impl Config {
         }
 
         builder
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// These defaults are security- and availability-relevant: hyper treats
+    /// an explicit `None` for `max_concurrent_streams` as "remove the
+    /// limit", so defaulting the field to `None` silently erased hyper's
+    /// hardened 200-stream default. Pin them so they cannot regress.
+    #[test]
+    fn default_advertises_a_concurrent_stream_limit() {
+        let config = Config::default();
+        assert_eq!(config.max_concurrent_streams, Some(200));
     }
 }
