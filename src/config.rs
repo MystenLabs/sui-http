@@ -171,6 +171,14 @@ impl Config {
     /// Sets whether to use an adaptive flow control. Defaults to false.
     /// Enabling this will override the limits set in http2_initial_stream_window_size and
     /// http2_initial_connection_window_size.
+    ///
+    /// Warning: enabling this resets both receive windows to the HTTP/2
+    /// spec default of 65,535 bytes until BDP probing ramps them back up.
+    /// Until then the whole connection has a single stalled stream's worth
+    /// of window, so one slow reader can starve every other stream on the
+    /// connection. For multiplexed streaming workloads this measurably
+    /// underperforms the static defaults; prefer setting explicit window
+    /// sizes instead.
     pub fn http2_adaptive_window(self, enabled: Option<bool>) -> Self {
         Self {
             http2_adaptive_window: enabled,
