@@ -5,6 +5,20 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-07-15
+
+### Changed
+
+- Reverted the 0.3.0 change that enabled HTTP/2 keepalive (60 second
+  ping interval) and TCP keepalive (60 second idle time) by default.
+  `Config::default()` disables both again, restoring the pre-0.3.0
+  behavior; opt in with `Config::http2_keepalive_interval` and
+  `Config::tcp_keepalive`.
+- Reverted the 0.3.0 change that set `SO_REUSEADDR` on the listener
+  socket before binding. As before 0.3.0, rebinding a port immediately
+  after a restart may fail with `EADDRINUSE` while connections from the
+  previous process linger in TIME_WAIT.
+
 ## [0.3.0] - 2026-07-14
 
 ### Fixed
@@ -120,6 +134,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial release.
 
+[0.3.1]: https://github.com/mystenlabs/sui-http/releases/tag/v0.3.1
 [0.3.0]: https://github.com/mystenlabs/sui-http/releases/tag/v0.3.0
 [0.2.0]: https://github.com/mystenlabs/sui-http/releases/tag/v0.2.0
 [0.1.0]: https://github.com/mystenlabs/sui-http/releases/tag/v0.1.0
