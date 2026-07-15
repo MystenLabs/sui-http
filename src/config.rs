@@ -122,8 +122,12 @@ impl Config {
         }
     }
 
-    /// Sets the grace period allowed after [`Config::max_connection_age`]
-    /// before the connection is forcefully closed.
+    /// Sets the grace period allowed after a graceful shutdown of a
+    /// connection is initiated before the connection is forcefully closed.
+    ///
+    /// The grace period applies however the graceful shutdown was
+    /// triggered: [`Config::max_connection_age`] expiring,
+    /// `ConnectionInfo::close`, or `ServerHandle::trigger_shutdown`.
     ///
     /// A graceful shutdown waits for in-flight requests to complete, but a
     /// stream that can make no progress -- for example, a response wedged
@@ -134,8 +138,6 @@ impl Config {
     /// `MAX_CONNECTION_AGE_GRACE`. This is the only server-side mechanism
     /// that reclaims send-stalled streams: middleware cannot do it because
     /// the response body is no longer polled once the stream stalls.
-    ///
-    /// Does nothing unless [`Config::max_connection_age`] is also set.
     ///
     /// Default is an unlimited grace period (`None`): the connection stays
     /// open until every in-flight request completes.

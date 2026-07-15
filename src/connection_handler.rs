@@ -45,6 +45,15 @@ pub async fn serve_connection<IO, S, B, C>(
         tokio::select! {
             _ = &mut sig => {
                 conn.as_mut().graceful_shutdown();
+                // Bound the drain the same way an age-triggered shutdown
+                // is bounded, so a wedged stream cannot keep the
+                // connection alive past the grace period. If the age
+                // timer already started the grace period, keep its
+                // earlier deadline.
+                if !in_grace_period {
+                    in_grace_period = true;
+                    sleep.set(sleep_or_pending(max_connection_age_grace));
+                }
             }
             rv = &mut conn => {
                 if let Err(err) = rv {
