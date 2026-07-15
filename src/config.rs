@@ -3,6 +3,8 @@
 
 use std::time::Duration;
 
+// Matches hyper's default.
+const DEFAULT_HTTP1_HEADER_READ_TIMEOUT_SECS: u64 = 30;
 const DEFAULT_HTTP2_KEEPALIVE_INTERVAL_SECS: u64 = 60;
 const DEFAULT_HTTP2_KEEPALIVE_TIMEOUT_SECS: u64 = 20;
 const DEFAULT_TCP_KEEPALIVE_SECS: u64 = 60;
@@ -24,6 +26,7 @@ pub struct Config {
     http2_max_pending_accept_reset_streams: Option<usize>,
     http2_max_header_list_size: Option<u32>,
     max_frame_size: Option<u32>,
+    http1_header_read_timeout: Option<Duration>,
     pub(crate) accept_http1: bool,
     enable_connect_protocol: bool,
     pub(crate) max_connection_age: Option<Duration>,
@@ -48,6 +51,9 @@ impl Default for Config {
             http2_max_pending_accept_reset_streams: None,
             http2_max_header_list_size: None,
             max_frame_size: None,
+            http1_header_read_timeout: Some(Duration::from_secs(
+                DEFAULT_HTTP1_HEADER_READ_TIMEOUT_SECS,
+            )),
             accept_http1: true,
             enable_connect_protocol: true,
             max_connection_age: None,
@@ -254,6 +260,26 @@ impl Config {
         }
     }
 
+    /// Sets a timeout for receiving the complete header block of an HTTP/1
+    /// request.
+    ///
+    /// If a client does not transmit its entire header block within this
+    /// duration the connection is closed. This is the defense against
+    /// slowloris-style attacks, where clients hold sockets open
+    /// indefinitely by sending partial requests. Pass `None` to disable
+    /// the timeout.
+    ///
+    /// Has no effect on HTTP/2 connections, whose liveness is covered by
+    /// [`Config::http2_keepalive_interval`].
+    ///
+    /// Default is 30 seconds, matching hyper.
+    pub fn http1_header_read_timeout(self, timeout: Option<Duration>) -> Self {
+        Self {
+            http1_header_read_timeout: timeout,
+            ..self
+        }
+    }
+
     /// Allow this accepting http1 requests.
     ///
     /// Default is `true`.
@@ -307,6 +333,14 @@ impl Config {
             .http2_keepalive_timeout
             .unwrap_or_else(|| Duration::new(DEFAULT_HTTP2_KEEPALIVE_TIMEOUT_SECS, 0));
 
+        // The timer is required for the header read timeout to take
+        // effect: hyper silently disables its defaulted timeout when no
+        // timer is set.
+        builder
+            .http1()
+            .timer(hyper_util::rt::TokioTimer::new())
+            .header_read_timeout(self.http1_header_read_timeout);
+
         builder
             .http2()
             .timer(hyper_util::rt::TokioTimer::new())
@@ -352,5 +386,17 @@ mod tests {
             Some(Duration::from_secs(60))
         );
         assert_eq!(config.tcp_keepalive, Some(Duration::from_secs(60)));
+    }
+
+    /// The header read timeout is the slowloris defense for HTTP/1
+    /// connections; pin the default so it cannot silently regress to
+    /// disabled.
+    #[test]
+    fn default_enables_http1_header_read_timeout() {
+        let config = Config::default();
+        assert_eq!(
+            config.http1_header_read_timeout,
+            Some(Duration::from_secs(30))
+        );
     }
 }
