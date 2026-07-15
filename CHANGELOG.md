@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- The listener now sets `SO_REUSEADDR` before binding (except on
+  Windows), matching `tokio::net::TcpListener::bind`. Previously a fast
+  restart could fail with `EADDRINUSE` while connections from the
+  previous process lingered in TIME_WAIT.
+
 ### Added
 
 - `Config::max_connection_age_grace` bounds how long a connection may
