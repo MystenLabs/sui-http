@@ -356,6 +356,7 @@ where
                 self.config.connection_builder(),
                 connection_shutdown_token,
                 self.config.max_connection_age,
+                self.config.max_connection_age_grace,
                 on_connection_close,
             ));
     }
